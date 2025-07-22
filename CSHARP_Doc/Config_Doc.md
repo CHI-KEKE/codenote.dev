@@ -59,10 +59,10 @@ Install-Package Microsoft.Extensions.Configuration.Json
 {
   "Stripe": {
     "ApiUrl": "https://api.stripe.com/v1/payment_methods",
-    "ApiKey": "sk_test_51KWLzbEUxCsaikE27VeDZUIMuP6o6XrHdnw9dsrMbAGQMZBj9kSvAO1qrD6kGU8lh3AFoWEZxX0DrOZZDUcOXAls00n48V6n2I"
+    "ApiKey": ""
   },
   "ConnectionStrings": {
-    "WebStoreDB": "Data Source=SG-HK-QA-DB1.hk.sg.91app.corp;Initial Catalog=WebStoreDB;Persist Security Info=True;User ID=webstoredbuser;Password=P7kVec2?pGmFX@yMRDKU;Application Name=Nine1.Notification.Template.Processor;MultiSubnetFailover=Yes;MultipleActiveResultSets=true;Trust Server Certificate=true"
+    "WebStoreDB": ""
   }
 }
 ```
