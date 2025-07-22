@@ -59,7 +59,7 @@ Install-Package Microsoft.Extensions.Configuration.Json
 {
   "Stripe": {
     "ApiUrl": "https://api.stripe.com/v1/payment_methods",
-    "ApiKey": ""
+    "": ""
   },
   "ConnectionStrings": {
     "WebStoreDB": ""
@@ -192,7 +192,7 @@ public HomeController(IConfiguration configuration)
 {
     _configuration = configuration;
 }
-
+   
 [HttpGet]
 public IActionResult Index()
 {
