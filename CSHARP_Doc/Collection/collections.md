@@ -8,6 +8,9 @@
   - [1.2 Select 可以利用 index](#12-select-可以利用-index)
     - [1.2.1 基本語法與應用](#121-基本語法與應用)
     - [1.2.2 實際應用範例](#122-實際應用範例)
+  - [1.3 yield return 的延遲效果](#13-yield-return-的延遲效果)
+    - [1.3.1 延遲執行的工作原理](#131-延遲執行的工作原理)
+    - [1.3.2 實際範例](#132-實際範例)
 
 ---
 
@@ -205,4 +208,121 @@ bbb and 1
 bbb and 2
 bbb and 3
 bbb and 4
+```
+
+---
+
+### 1.3 yield return 的延遲效果
+
+`yield return` 是 C# 中一個強大的功能，它可以建立一個迭代器 (Iterator)，實現延遲執行 (Lazy Evaluation)。這意味著數據不會在方法被呼叫時立即產生，而是在實際需要時才逐一產生。
+
+#### 1.3.1 延遲執行的工作原理
+
+##### 🔄 迭代器基本概念
+
+使用 `yield return` 的方法會返回一個 `IEnumerable<T>`，但實際的資料產生是按需進行的：
+
+```csharp
+// 傳統方式 - 立即執行
+public List<int> GetNumbersTraditional()
+{
+    var numbers = new List<int>();
+    for (int i = 0; i < 5; i++)
+    {
+        Console.WriteLine($"產生數字 {i}");
+        numbers.Add(i);
+    }
+    return numbers; // 所有數字立即產生
+}
+
+// yield return 方式 - 延遲執行
+public IEnumerable<int> GetNumbersWithYield()
+{
+    for (int i = 0; i < 5; i++)
+    {
+        Console.WriteLine($"產生數字 {i}");
+        yield return i; // 只在需要時產生
+    }
+}
+```
+
+##### ⚡ 執行時機對比
+
+```csharp
+void Main()
+{
+    Console.WriteLine("=== 傳統方式 ===");
+    var traditionalNumbers = GetNumbersTraditional(); // 這裡會立即印出所有訊息
+    Console.WriteLine("方法已返回");
+    
+    Console.WriteLine("\n=== yield return 方式 ===");
+    var yieldNumbers = GetNumbersWithYield(); // 這裡不會有任何輸出
+    Console.WriteLine("方法已返回");
+    
+    Console.WriteLine("\n開始迭代:");
+    foreach (var num in yieldNumbers) // 這裡才開始產生數字
+    {
+        Console.WriteLine($"取得: {num}");
+    }
+}
+```
+
+#### 1.3.2 實際範例
+
+以下範例展示了 `yield return` 在產品資料處理中的延遲執行效果：
+
+```csharp
+void Main()
+{
+    var store = new DemoStore();
+    var productList = store.GetProducts();
+    
+    // 注意：這行被註解掉了，如果執行會觸發所有產品的產生
+    // var total = productList.Count();
+    // $"Total products {total}".Dump();
+
+    // 只有在實際迭代時，產品才會被逐一產生
+    foreach (var product in productList)
+    {
+        $"{product.Id}，{product.Name}".Dump();
+    }
+}
+
+public class DemoStore
+{
+    public IEnumerable<Product> GetProducts()
+    {
+        int count = 5;
+        for (int i = 0; i < count; i++)
+        {
+            $"{i}產生Product中".Dump(); // 只有在需要時才會執行
+            yield return new Product()
+            {
+                Id = i,
+                Name = $"Pro {i}"
+            };
+        }
+    }
+}
+
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+```
+
+##### 📊 預期輸出結果
+
+```
+0產生Product中
+0，Pro 0
+1產生Product中
+1，Pro 1
+2產生Product中
+2，Pro 2
+3產生Product中
+3，Pro 3
+4產生Product中
+4，Pro 4
 ```
