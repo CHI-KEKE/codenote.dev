@@ -1,13 +1,16 @@
 # C# 程式碼品質提升指南
 
 ## 目錄
-- [一、程式碼重構與共用能力](#一程式碼重構與共用能力)
   - [1.1 抽取共用驗證邏輯](#11-抽取共用驗證邏輯)
   - [1.2 關於靜態與實例方法](#12-關於靜態與實例方法)
     - [1.2.1 舉例 Substring() vs char.ToUpper()](#121-舉例-substring-vs-chartoupper)
+  - [1.3 適時的考慮把想法包成物件](#13-適時的考慮把想法包成物件)
+    - [1.3.1 參與者物件範例](#131-參與者物件範例)
+  - [1.4 自製管理器,可註冊可執行](#14-自製管理器可註冊可執行)
+    - [1.4.1 Plugin 管理器範例](#141-plugin-管理器範例)
+  - [1.5 考慮使用泛型](#15-考慮使用泛型)
+    - [1.5.1 泛型計算器範例](#151-泛型計算器範例)
 ---
-
-## 一、程式碼重構與共用能力
 
 ### 1.1 抽取共用驗證邏輯9
 
@@ -156,4 +159,175 @@ string result = text.Substring(6); // 方法需要存取 text 物件的內部資
 char letter = 'a';
 // ToUpper 不需要依賴任何物件的狀態，純粹是功能性的轉換
 char upperLetter = char.ToUpper(letter); // 只是一個純函式轉換
+```
+
+### 1.3 適時的考慮把想法包成物件
+
+以下範例展示如何將相關的概念（參與者的名稱和時區）包裝成一個有意義的物件：
+
+```csharp
+void Main()
+{
+    var participants = new List<Participant>
+    {
+        new Participant("倫敦總部", TimeZoneInfo.FindSystemTimeZoneById("GMT Standard Time")),
+        new Participant("Tokyo 分公司", TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time")),
+        new Participant("Eastern 分公司", TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time")),
+        new Participant("AUS 分公司", TimeZoneInfo.FindSystemTimeZoneById("AUS Eastern Standard Time"))
+    };
+
+    // 示範印出每個參與者的名稱和時區
+    foreach (var p in participants)
+    {
+        Console.WriteLine($"{p.Name} - {p.TimeZoneInfo.DisplayName}");
+    }
+}
+
+public class Participant
+{
+    public string Name { get; }
+    public TimeZoneInfo TimeZoneInfo { get; }
+
+    public Participant(string name, TimeZoneInfo timeZoneInfo)
+    {
+        Name = name;
+        TimeZoneInfo = timeZoneInfo;
+    }
+}
+```
+
+### 1.4 自製管理器,可註冊可執行
+
+#### 1.4.1 Plugin 管理器範例
+
+以下範例展示如何建立一個簡單但功能完整的 Plugin 管理器：
+
+```csharp
+void Main()
+{
+    var manager = new PluginManager();
+    manager.RegisterPlugin("burnout", () => Console.WriteLine("Burnout..."));
+    manager.RegisterPlugin("tired", () => Console.WriteLine("tired..."));
+    manager.ExecutePlugin("burnout");
+    manager.ExecutePlugin("tired");
+    manager.ListPlugins();
+}
+
+public class PluginManager
+{
+    Dictionary<string, Action> plugins = new Dictionary<string, Action>();
+    
+    public void RegisterPlugin(string name, Action action)
+    {
+        if (plugins.ContainsKey(name) == false)
+        {
+            plugins.Add(name, action);
+        }
+        else
+        {
+            Console.WriteLine($"plugin : {name}, 已存在!");
+        }
+    }
+    
+    public void ExecutePlugin(string name)
+    {
+        if (plugins.TryGetValue(name, out var plugin))
+        {
+            plugin(); // 執行該 plugin
+        }
+        else
+        {
+            Console.WriteLine($"找不到名稱為 '{name}' 的 Plugin。");
+        }
+    }
+
+    public void ListPlugins()
+    {
+        Console.WriteLine("目前可用的 Plugins：");
+        foreach (var name in plugins.Keys)
+        {
+            Console.WriteLine($"- {name}");
+        }
+    }
+}
+```
+
+### 1.5 考慮使用泛型
+
+#### 1.5.1 泛型計算器範例
+
+```csharp
+void Main()
+{
+    // 使用 Lambda 表達式進行計算
+    Calculator.Operate<decimal>(1m, 2m, (x,y) => x + y).Dump();  // 輸出：3
+    
+    // 使用預定義的運算函式字典
+    Calculator.Operate<decimal>(1m, 2m, Calculator.OpDict<decimal>()["Add"]).Dump();  // 輸出：3
+}
+
+public static class Calculator
+{
+    /// <summary>
+    /// 泛型運算方法，接受任何型別 T 和對應的運算函式
+    /// </summary>
+    /// <typeparam name="T">數值型別</typeparam>
+    /// <param name="a">第一個運算數</param>
+    /// <param name="b">第二個運算數</param>
+    /// <param name="doSomething">運算函式</param>
+    /// <returns>運算結果</returns>
+    public static T Operate<T>(T a, T b, Func<T, T, T> doSomething) => doSomething(a, b);
+    
+    /// <summary>
+    /// 提供預定義的運算函式字典，限制 T 必須實作 INumber 介面
+    /// </summary>
+    /// <typeparam name="T">必須實作 System.Numerics.INumber 的數值型別</typeparam>
+    /// <returns>包含基本運算的函式字典</returns>
+    public static Dictionary<string, Func<T, T, T>> OpDict<T>() where T : System.Numerics.INumber<T> => new()
+    {
+        { "Add", (x, y) => x + y },
+        { "Sub", (x, y) => x - y },
+        { "Mul", (x, y) => x * y },
+        { "Div", (x, y) => x / y }
+    };
+}
+```
+
+##### 🎯 泛型的優勢
+
+**型別安全：**
+- ✅ 編譯時期檢查型別正確性
+- ✅ 避免執行時期的型別轉換錯誤
+- ✅ IntelliSense 提供更好的程式碼提示
+
+**效能提升：**
+- 🚀 避免裝箱 (Boxing) 和拆箱 (Unboxing) 操作
+- 🚀 減少型別轉換的效能損耗
+- 🚀 編譯器優化更有效率
+
+**程式碼重用：**
+- 🔄 一次編寫，多種型別適用
+- 🔄 減少重複程式碼
+- 🔄 提高維護性
+
+##### 📊 使用範例比較
+
+**傳統做法（沒有泛型）：**
+```csharp
+// 需要為每種型別寫不同的方法
+public static int AddInt(int a, int b) => a + b;
+public static decimal AddDecimal(decimal a, decimal b) => a + b;
+public static double AddDouble(double a, double b) => a + b;
+public static float AddFloat(float a, float b) => a + b;
+```
+
+**泛型做法：**
+```csharp
+// 一個方法支援所有數值型別
+public static T Add<T>(T a, T b) where T : System.Numerics.INumber<T> => a + b;
+
+// 使用方式
+var intResult = Add<int>(1, 2);           // 3
+var decimalResult = Add<decimal>(1.5m, 2.3m);  // 3.8
+var doubleResult = Add<double>(1.1, 2.2);      // 3.3
 ```

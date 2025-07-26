@@ -5,6 +5,9 @@
   - [1.1 Contains() 型別不匹配問題](#11-contains-型別不匹配問題)
     - [1.1.1 問題現象與原因分析](#111-問題現象與原因分析)
     - [1.1.2 解決方案](#112-解決方案)
+  - [1.2 Select 可以利用 index](#12-select-可以利用-index)
+    - [1.2.1 基本語法與應用](#121-基本語法與應用)
+    - [1.2.2 實際應用範例](#122-實際應用範例)
 
 ---
 
@@ -128,4 +131,78 @@ void Main()
                   _pointsPayDisplayPromotionTypes.Contains(enumValue);
     result.Dump();
 }
+```
+
+---
+
+### 1.2 Select 可以利用 index
+
+#### 1.2.1 實際應用範例
+
+以下範例展示如何在分組處理中使用 `Select` 的索引功能來為每個群組內的元素分配序號：
+
+```csharp
+void Main()
+{
+    var ccc = new List<PromotionRewardAmortizationBaseEntity>()
+    {
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "AAA", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "AAA", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "AAA", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "AAA", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "bbb", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "bbb", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "bbb", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "bbb", Seq = 0},
+        new PromotionRewardAmortizationBaseEntity{TradesOrderSlaveCode = "bbb", Seq = 0},
+    };
+
+    // 依據 TradesOrderSlaveCode 分組，處理 seq
+    var orderSlaveCodeGroups = ccc.GroupBy(x => x.TradesOrderSlaveCode);
+    foreach (var group in orderSlaveCodeGroups)
+    {
+        group.Select((entity, index) =>
+        {
+            entity.Seq = index;  // 使用 index 設定序號
+            return entity;
+        }).ToList();
+    }
+
+    // 顯示結果
+    ccc.Select((text) =>
+    {
+        Console.WriteLine($"{text.TradesOrderSlaveCode} and {text.Seq}");
+        return text;
+    }).ToList();
+}
+
+/// <summary>
+/// 攤提資訊Base Entity
+/// </summary>
+public class PromotionRewardAmortizationBaseEntity
+{
+    /// <summary>
+    /// TS Code
+    /// </summary>
+    public string TradesOrderSlaveCode { get; set; }
+
+    /// <summary>
+    /// 流水號
+    /// </summary>
+    public int Seq { get; set; }
+}
+```
+
+##### 📊 輸出結果
+
+```
+AAA and 0
+AAA and 1
+AAA and 2
+AAA and 3
+bbb and 0
+bbb and 1
+bbb and 2
+bbb and 3
+bbb and 4
 ```
