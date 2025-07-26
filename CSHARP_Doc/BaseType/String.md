@@ -9,6 +9,7 @@
 - [🔗 字串串接大法](#字串串接大法)
 - [🧹 字串清理技巧](#字串清理技巧)
 - [🎭 字元與編碼深度解析](#字元與編碼深度解析)
+- [🎪 字串擴充方法](#字串擴充方法)
 
 ---
 
@@ -462,21 +463,62 @@ foreach (var rune in text.EnumerateRunes())
 
 ---
 
-## 🎉 總結
+## � 字串擴充方法
 
-這份指南涵蓋了 C# 字串處理的核心概念：
+### 9.1 FirstUpper - 首字母大寫擴充
 
-- 🔍 **空值檢查**：善用 `IsNullOrWhiteSpace`
-- ✂️ **字串擷取**：掌握 `Substring` 技巧
-- 🏷️ **nameof**：編譯時期的安全字串
-- 🔪 **字串分割**：防禦性程式設計
-- 🧬 **不可變性**：理解 string 的設計哲學
-- 🔗 **字串串接**：選擇適合的方法
-- 🧹 **字串清理**：實用的處理技巧
-- 🎭 **字元編碼**：深入 UTF-16 與代理對
+有時候我們需要將字串的第一個字元轉為大寫，其餘保持不變。透過擴充方法，我們可以讓程式碼更加優雅：
 
-記住：字串處理不只是技術，更是藝術！🎨
+```csharp
+void Main()
+{
+    "fuck".ToFirstUpper().Dump();  // 輸出：Fuck
+    "efew".ToUpper().Dump();       // 輸出：EFEW (對比用)
+    
+    // 更多測試案例
+    "hello world".ToFirstUpper();  // Hello world
+    "c#".ToFirstUpper();           // C#
+    "".ToFirstUpper();             // (空字串)
+    ((string)null).ToFirstUpper(); // null
+}
 
----
+/// <summary>
+/// 字串擴充方法類別
+/// </summary>
+public static class StringExtention
+{
+    /// <summary>
+    /// 將字串的第一個字元轉換為大寫，其餘字元保持不變
+    /// </summary>
+    /// <param name="value">要處理的字串</param>
+    /// <returns>首字母大寫的字串</returns>
+    public static string ToFirstUpper(this string value)
+    {
+        // 🛡️ 防禦性程式設計：處理 null 或空字串
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
 
-*📝 備註：本指南基於 .NET 的現代 C# 版本，某些功能可能需要特定版本支援。*
+        // 🎯 單一字元的特殊處理
+        if (value.Length == 1)
+        {
+            return value.ToUpper();
+        }
+
+        // ✨ 核心邏輯：首字元大寫 + 其餘字元不變
+        return char.ToUpper(value[0]) + value.Substring(1);
+    }
+}
+```
+
+**🎯 ToFirstUpper 的設計重點：**
+
+#### 🛡️ 安全性考量
+```csharp
+// 處理各種邊界情況
+Console.WriteLine(((string)null).ToFirstUpper());      // null，不會拋出例外
+Console.WriteLine("".ToFirstUpper());                  // 空字串
+Console.WriteLine("a".ToFirstUpper());                 // "A"，單字元處理
+Console.WriteLine("ALREADY_UPPER".ToFirstUpper());     // "ALREADY_UPPER"，已是大寫
+```
