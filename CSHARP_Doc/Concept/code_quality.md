@@ -10,6 +10,7 @@
     - [1.4.1 Plugin 管理器範例](#141-plugin-管理器範例)
   - [1.5 考慮使用泛型](#15-考慮使用泛型)
     - [1.5.1 泛型計算器範例](#151-泛型計算器範例)
+    - [1.5.2 Wrapper](#152-wrapper)
 ---
 
 ### 1.1 抽取共用驗證邏輯9
@@ -330,4 +331,59 @@ public static T Add<T>(T a, T b) where T : System.Numerics.INumber<T> => a + b;
 var intResult = Add<int>(1, 2);           // 3
 var decimalResult = Add<decimal>(1.5m, 2.3m);  // 3.8
 var doubleResult = Add<double>(1.1, 2.2);      // 3.3
+```
+
+#### 1.5.2 Wrapper
+
+Wrapper 模式是一種常見的設計模式，它可以用來包裝現有的物件，提供額外的功能或改變其行為。在泛型的幫助下，我們可以建立通用的 Wrapper 類別來處理任何型別的物件。
+
+##### 🎯 Wrapper 基本概念
+
+Wrapper 類別的主要目的是：
+- 🔐 **封裝原始物件**：提供對底層物件的受控存取
+- 🎨 **增強功能**：在不修改原始類別的情況下添加新功能
+- 🛡️ **保護資料**：控制對包裝物件的存取方式
+- 🔄 **轉換介面**：為不相容的介面提供適配
+
+##### 📝 實際應用範例
+
+以下範例展示了泛型 Wrapper 的使用和一些需要注意的問題：
+
+```csharp
+void Main()
+{
+    var items = new List<int> { 1, 2, 3 };
+    var wrappers = CreateWrapper2<int>(items);
+
+    var store = new List<Wrapper<int>>();
+    store.AddRange(wrappers);
+
+    // ❌ 這會回傳 false，因為 Wrapper 沒有實作相等性比較
+    var storeContainsAnyWrappers = wrappers
+        .Any(wrapper => store.Contains(wrapper)).Dump(); // = false	
+}
+
+public IEnumerable<Wrapper<T>> CreateWrapper<T>(IEnumerable<T> items)
+{
+    return items.Select(item => new Wrapper<T>(item));
+}
+
+public IEnumerable<Wrapper<T>> CreateWrapper2<T>(IEnumerable<T> items)
+{
+    return items.Select(item =>
+    {
+        Console.WriteLine($"Create wrapper for {item}");
+        return new Wrapper<T>(item);
+    }).ToList();
+}
+
+public class Wrapper<T>
+{
+    private readonly T _item;
+
+    public Wrapper(T item)
+    {
+        _item = item;
+    }
+}
 ```
