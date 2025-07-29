@@ -11,6 +11,9 @@
   - [1.5 考慮使用泛型](#15-考慮使用泛型)
     - [1.5.1 泛型計算器範例](#151-泛型計算器範例)
     - [1.5.2 Wrapper](#152-wrapper)
+  - [1.6 實體與介面](#16-實體與介面)
+    - [1.6.1 介面變數與實體物件](#161-介面變數與實體物件)
+    - [1.6.2 GetType() 與型別判斷](#162-gettype-與型別判斷)
 ---
 
 ### 1.1 抽取共用驗證邏輯9
@@ -387,3 +390,289 @@ public class Wrapper<T>
     }
 }
 ```
+
+##### 🔍 問題分析
+
+在上述範例中，`storeContainsAnyWrappers` 會回傳 `false`，這是因為：
+
+**🚨 物件參考比較問題：**
+1. `CreateWrapper2` 建立了新的 `Wrapper<T>` 實例
+2. `store.AddRange(wrappers)` 將這些實例加入到 store 中
+3. `Contains()` 使用預設的參考相等性比較
+4. 即使包裝的值相同，但 `Wrapper` 物件是不同的實例
+
+##### ✅ 解決方案
+
+**方案一：實作 IEquatable<T> 介面**
+```csharp
+public class Wrapper<T> : IEquatable<Wrapper<T>>
+{
+    private readonly T _item;
+
+    public Wrapper(T item)
+    {
+        _item = item;
+    }
+
+    public T Item => _item;
+
+    public bool Equals(Wrapper<T> other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+        return EqualityComparer<T>.Default.Equals(_item, other._item);
+    }
+
+    public override bool Equals(object obj)
+    {
+        return obj is Wrapper<T> wrapper && Equals(wrapper);
+    }
+
+    public override int GetHashCode()
+    {
+        return EqualityComparer<T>.Default.GetHashCode(_item);
+    }
+
+    public static bool operator ==(Wrapper<T> left, Wrapper<T> right)
+    {
+        return EqualityComparer<Wrapper<T>>.Default.Equals(left, right);
+    }
+
+    public static bool operator !=(Wrapper<T> left, Wrapper<T> right)
+    {
+        return !(left == right);
+    }
+}
+```
+
+**方案二：使用記錄類型 (Record)**
+```csharp
+public record Wrapper<T>(T Item);
+
+// 使用方式
+void Main()
+{
+    var items = new List<int> { 1, 2, 3 };
+    var wrappers = items.Select(item => new Wrapper<int>(item)).ToList();
+    
+    var store = new List<Wrapper<int>>();
+    store.AddRange(wrappers);
+    
+    // ✅ 現在會回傳 true，因為 record 自動實作了相等性比較
+    var storeContainsAnyWrappers = wrappers
+        .Any(wrapper => store.Contains(wrapper)); // = true
+}
+```
+
+> **🌟 重點提醒**
+> 
+> 1. **相等性問題**：Wrapper 類別需要適當實作相等性比較，否則 `Contains()` 等方法可能無法正常工作
+> 2. **記錄類型優勢**：C# 9+ 的 record 類型自動提供值相等性，非常適合作為簡單的 Wrapper
+> 3. **延遲執行**：注意 LINQ 的延遲執行特性對 Wrapper 建立時機的影響
+> 4. **功能擴展**：Wrapper 模式可以用來添加日誌、快取、驗證等橫切關注點
+
+---
+
+### 1.6 實體與介面
+
+在 C# 程式設計中，理解介面變數與實體物件之間的關係是非常重要的。介面提供了抽象層，讓我們可以透過相同的介面來操作不同的實作類別。
+
+#### 1.6.1 介面變數與實體物件
+
+##### 📝 基本範例
+
+以下範例展示了介面變數如何指向實體物件：
+
+```csharp
+void Main()
+{
+    IPaymentMiddlewareHttpClient test = new PaymentMiddlewareHttpClient();
+    test.GetType().Name.Dump(); // 輸出：PaymentMiddlewareHttpClient
+}
+
+public class PaymentMiddlewareHttpClient : IPaymentMiddlewareHttpClient
+{
+    public string GetRequestId()
+    {
+        throw new NotImplementedException();
+    }
+}
+
+public interface IPaymentMiddlewareHttpClient
+{
+    /// <summary>
+    /// 取得 Payment Middleware Request ID
+    /// </summary>
+    /// <returns>Request ID</returns>
+    string GetRequestId();
+}
+```
+
+#### 1.6.2 GetType() 與型別判斷
+
+##### 🔍 核心概念理解
+
+在上述範例中，`test` 是一個「指向介面型別」的變數，但變數裡面實際放的物件是 `PaymentMiddlewareHttpClient`。
+
+**重要觀念：**
+- 🎯 **變數型別**：`test` 的宣告型別是 `IPaymentMiddlewareHttpClient`（介面）
+- 🏗️ **物件型別**：實際建立的物件是 `PaymentMiddlewareHttpClient`（實作類別）
+- ⚡ **執行期行為**：方法呼叫時，會使用實際物件的實作，不是介面
+
+##### 💡 為什麼 GetType() 回傳實作類別？
+
+因為執行時要知道「這個物件的實際類型是誰」，真正決定方法邏輯的是物件本身的類型（實作類別），不是介面。
+
+`GetType()` 是 `object` 類別的方法，用來在執行期取得物件的真實型別。它不會理會變數表面宣告型別，因為執行期需要知道真正的類別才能調用方法、執行程式邏輯。
+
+##### 📊 型別檢查比較表
+
+| 檢查方式 | 檢查對象 | 結果 | 說明 |
+|----------|----------|------|------|
+| `test.GetType()` | 實際物件型別 | `PaymentMiddlewareHttpClient` | 執行期的真實型別 |
+| `typeof(IPaymentMiddlewareHttpClient)` | 介面型別 | `IPaymentMiddlewareHttpClient` | 編譯期的介面型別 |
+| `test is IPaymentMiddlewareHttpClient` | 型別相容性檢查 | `true` | 物件是否實作該介面 |
+| `test is PaymentMiddlewareHttpClient` | 具體型別檢查 | `true` | 物件是否為該具體類別 |
+
+##### 🔄 多型與介面的實際應用
+
+```csharp
+void Main()
+{
+    // 建立不同的實作
+    IPaymentMiddlewareHttpClient client1 = new PaymentMiddlewareHttpClient();
+    IPaymentMiddlewareHttpClient client2 = new MockPaymentMiddlewareHttpClient();
+    IPaymentMiddlewareHttpClient client3 = new TestPaymentMiddlewareHttpClient();
+    
+    // 雖然都宣告為介面型別，但 GetType() 會顯示實際類別
+    Console.WriteLine(client1.GetType().Name); // PaymentMiddlewareHttpClient
+    Console.WriteLine(client2.GetType().Name); // MockPaymentMiddlewareHttpClient
+    Console.WriteLine(client3.GetType().Name); // TestPaymentMiddlewareHttpClient
+    
+    // 統一處理，但各自執行不同的實作
+    ProcessPayment(client1);
+    ProcessPayment(client2);
+    ProcessPayment(client3);
+}
+
+void ProcessPayment(IPaymentMiddlewareHttpClient client)
+{
+    // 這裡會根據實際物件型別呼叫對應的方法實作
+    var requestId = client.GetRequestId();
+    Console.WriteLine($"處理付款，Request ID: {requestId}");
+}
+
+// 不同的實作類別
+public class PaymentMiddlewareHttpClient : IPaymentMiddlewareHttpClient
+{
+    public string GetRequestId()
+    {
+        return "PROD-" + Guid.NewGuid().ToString("N")[..8];
+    }
+}
+
+public class MockPaymentMiddlewareHttpClient : IPaymentMiddlewareHttpClient
+{
+    public string GetRequestId()
+    {
+        return "MOCK-12345678";
+    }
+}
+
+public class TestPaymentMiddlewareHttpClient : IPaymentMiddlewareHttpClient
+{
+    public string GetRequestId()
+    {
+        return "TEST-" + DateTime.Now.Ticks.ToString()[..8];
+    }
+}
+```
+
+##### 🎯 實務應用場景
+
+**場景一：依賴注入與型別檢查**
+```csharp
+void Main()
+{
+    // 模擬依賴注入容器返回的物件
+    IPaymentMiddlewareHttpClient injectedClient = GetPaymentClient();
+    
+    // 檢查實際注入的是哪一個實作
+    Console.WriteLine($"注入的實作類別: {injectedClient.GetType().Name}");
+    
+    // 根據實際型別進行特殊處理
+    if (injectedClient.GetType() == typeof(MockPaymentMiddlewareHttpClient))
+    {
+        Console.WriteLine("偵測到 Mock 實作，啟用測試模式");
+    }
+}
+
+IPaymentMiddlewareHttpClient GetPaymentClient()
+{
+    // 在實際系統中，這可能由 DI 容器決定
+    return new PaymentMiddlewareHttpClient();
+}
+```
+
+**場景二：介面轉型與型別安全**
+```csharp
+void Main()
+{
+    IPaymentMiddlewareHttpClient client = new PaymentMiddlewareHttpClient();
+    
+    // 安全的型別轉換
+    if (client is PaymentMiddlewareHttpClient concreteClient)
+    {
+        // 可以存取具體類別的額外方法
+        Console.WriteLine("成功轉型為具體實作");
+    }
+    
+    // 使用模式匹配進行型別檢查
+    var result = client switch
+    {
+        PaymentMiddlewareHttpClient => "正式環境客戶端",
+        MockPaymentMiddlewareHttpClient => "測試環境客戶端",
+        TestPaymentMiddlewareHttpClient => "開發環境客戶端",
+        _ => "未知的客戶端實作"
+    };
+    
+    Console.WriteLine($"客戶端類型: {result}");
+}
+```
+
+**場景三：除錯和日誌記錄**
+```csharp
+public class PaymentService
+{
+    private readonly IPaymentMiddlewareHttpClient _client;
+    
+    public PaymentService(IPaymentMiddlewareHttpClient client)
+    {
+        _client = client;
+        
+        // 記錄實際注入的實作類別，有助於除錯
+        Console.WriteLine($"PaymentService 使用的實作: {client.GetType().FullName}");
+    }
+    
+    public void ProcessPayment()
+    {
+        try
+        {
+            var requestId = _client.GetRequestId();
+            Console.WriteLine($"付款處理完成，ID: {requestId}");
+        }
+        catch (Exception ex)
+        {
+            // 在錯誤日誌中包含實際的實作類別資訊
+            Console.WriteLine($"付款處理失敗 - 實作類別: {_client.GetType().Name}, 錯誤: {ex.Message}");
+        }
+    }
+}
+```
+
+> **🌟 重點提醒**
+> 
+> 1. **介面 vs 實作**：介面定義契約，實作類別提供具體邏輯，`GetType()` 永遠回傳實際物件的型別
+> 2. **多型的威力**：相同介面可以有不同實作，讓程式具有高度彈性和可擴展性
+> 3. **型別檢查工具**：善用 `GetType()`、`typeof()`、`is` 和 `as` 來進行型別檢查和轉換
+> 4. **除錯友善**：在日誌中記錄實際型別資訊，有助於問題排查和系統監控

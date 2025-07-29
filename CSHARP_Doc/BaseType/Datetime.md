@@ -364,6 +364,24 @@ Console.WriteLine($"剩餘分鐘: {difference.Minutes}");
 
 ## 時間戳處理
 
+### 簡單的未來時戳建立
+
+```csharp
+DateTime currentTime = DateTime.Now;
+DateTime futureTime = currentTime.AddMinutes(15);
+
+var timestamp = (futureTime - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+
+Console.WriteLine($"當前時間：{currentTime}");
+Console.WriteLine($"加上15分鐘後的時間：{futureTime}");
+Console.WriteLine($"加上15分鐘後的時間戳：{timestamp}");
+```
+
+💡 **原理說明**
+- Unix 時間戳是從 1970年1月1日 00:00:00 UTC 開始計算
+- 通過計算時間差並轉換為毫秒數，得到時間戳
+- 這種方法適合簡單的時戳計算需求
+
 ### Unix 時間戳轉換
 
 ```csharp
