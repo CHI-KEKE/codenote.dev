@@ -11,6 +11,7 @@
   - [1.5 考慮使用泛型](#15-考慮使用泛型)
     - [1.5.1 泛型計算器範例](#151-泛型計算器範例)
     - [1.5.2 Wrapper](#152-wrapper)
+    - [1.5.3 泛型與快取](#153-泛型與快取)
   - [1.6 實體與介面](#16-實體與介面)
     - [1.6.1 介面變數與實體物件](#161-介面變數與實體物件)
     - [1.6.2 GetType() 與型別判斷](#162-gettype-與型別判斷)
@@ -470,6 +471,90 @@ void Main()
 > 2. **記錄類型優勢**：C# 9+ 的 record 類型自動提供值相等性，非常適合作為簡單的 Wrapper
 > 3. **延遲執行**：注意 LINQ 的延遲執行特性對 Wrapper 建立時機的影響
 > 4. **功能擴展**：Wrapper 模式可以用來添加日誌、快取、驗證等橫切關注點
+
+#### 1.5.3 泛型與快取
+
+泛型不僅在計算和包裝上有用，在快取機制中也能發揮強大的作用。透過泛型快取類別，我們可以建立一個通用的快取解決方案，適用於任何型別的資料。
+
+##### 📝 泛型快取範例
+
+```csharp
+void Main()
+{
+    var cache = new SimpleCache<string>();
+    var userIntro = cache.GetOrCreate("123", () => DB.GetUserInfo("123"));
+    userIntro.Dump();
+}
+
+public class SimpleCache<T>
+{
+    public MemoryCache cache = new MemoryCache(new MemoryCacheOptions());
+    
+    public T GetOrCreate(string key, Func<T> createItem)
+    {
+        T cacheEntry;
+        if(cache.TryGetValue(key, out cacheEntry) == false)
+        {
+            cacheEntry = createItem();
+            cache.Set(key, cacheEntry);
+        }
+        
+        return cacheEntry;
+    }
+}
+
+public static class DB
+{
+    public static string GetUserInfo(string number)
+    {
+        return "ya";
+    }
+}
+```
+
+##### 🎯 泛型快取的優勢
+
+**型別安全快取：**
+- ✅ 確保快取存取的型別正確性
+- ✅ 避免型別轉換錯誤
+- ✅ 編譯時期檢查型別一致性
+
+**通用性強：**
+- 🔄 可快取任何型別的資料（字串、物件、集合等）
+- 🔄 一次實作，多種場景適用
+- 🔄 提供統一的快取存取介面
+
+**效能提升：**
+- 🚀 避免重複的資料庫查詢或計算
+- 🚀 減少不必要的物件建立
+- 🚀 提供快速的記憶體存取
+
+##### 💡 實際應用場景
+
+**使用者資訊快取：**
+```csharp
+var userCache = new SimpleCache<UserInfo>();
+var user = userCache.GetOrCreate("user_123", () => UserService.GetUserById(123));
+```
+
+**計算結果快取：**
+```csharp
+var calculationCache = new SimpleCache<decimal>();
+var result = calculationCache.GetOrCreate("complex_calc_abc", () => PerformComplexCalculation());
+```
+
+**查詢結果快取：**
+```csharp
+var queryCache = new SimpleCache<List<Product>>();
+var products = queryCache.GetOrCreate("category_electronics", () => ProductService.GetByCategory("Electronics"));
+```
+
+> **🌟 重點提醒**
+> 
+> 1. **快取策略**：考慮快取過期時間和清理機制
+> 2. **記憶體管理**：監控快取大小，避免記憶體洩漏
+> 3. **執行緒安全**：在多執行緒環境中確保快取的執行緒安全性
+> 4. **資料一致性**：考慮快取更新和失效的策略
 
 ---
 
