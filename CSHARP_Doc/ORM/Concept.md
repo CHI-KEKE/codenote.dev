@@ -45,6 +45,15 @@
   - [2. 生命週期問題](#2-生命週期問題)
     - [2.1 記憶體洩漏](#21-記憶體洩漏)
     - [2.2 資料一致性問題](#22-資料一致性問題)
+- [七、ORM 防範 SQL Injection](#七orm-防範-sql-injection)
+  - [1. SQL Injection 威脅](#1-sql-injection-威脅)
+    - [1.1 攻擊原理](#11-攻擊原理)
+    - [1.2 威脅本質](#12-威脅本質)
+    - [1.3 危險範例](#13-危險範例)
+  - [2. ORM 防護機制](#2-orm-防護機制)
+    - [2.1 物件導向操作](#21-物件導向操作)
+    - [2.2 參數化查詢](#22-參數化查詢)
+    - [2.3 原始 SQL 安全](#23-原始-sql-安全)
 
 ---
 
@@ -437,3 +446,101 @@ using var scope = new TransactionScope();
 // ... 執行多個 DbContext 操作
 scope.Complete();
 ```
+
+## 七、ORM 防範 SQL Injection
+
+### 1. SQL Injection 威脅
+
+#### 1.1 攻擊原理
+
+🚨 **SQL Injection 定義**
+
+SQL Injection 是駭客在「輸入欄位」中輸入惡意的 SQL 語法，試圖控制或竄改資料庫。
+
+#### 1.2 威脅本質
+
+⚠️ **核心問題**
+
+當你把使用者的輸入直接「拼接」到 SQL 指令裡，資料庫根本分不清楚哪些是資料、哪些是指令，這就會出事。
+
+📋 **問題分析**
+
+- **資料與指令混淆**：使用者輸入被誤認為 SQL 指令
+- **直接字串拼接**：缺乏輸入驗證與參數化處理
+- **安全性漏洞**：可能導致資料洩漏或資料庫被破壞
+
+#### 1.3 危險範例
+
+🚫 **不安全的做法（直接拼接）**
+
+```csharp
+string userInput = "'; DROP TABLE Users; --";
+string sql = "SELECT * FROM Users WHERE Name = '" + userInput + "'";
+// sql 最後會變成：SELECT * FROM Users WHERE Name = ''; DROP TABLE Users; --
+// 然後 Users 資料表就被刪了！
+```
+
+🚨 **攻擊結果分析**
+
+1. **原始 SQL**：`SELECT * FROM Users WHERE Name = ''; DROP TABLE Users; --`
+2. **第一段**：`SELECT * FROM Users WHERE Name = ''` （空查詢）
+3. **第二段**：`DROP TABLE Users` （刪除整個資料表！）
+4. **第三段**：`--` （註解掉後續內容）
+
+### 2. ORM 防護機制
+
+#### 2.1 物件導向操作
+
+✅ **使用 Entity Framework 的安全做法**
+
+```csharp
+using (var db = new MyDbContext())
+{
+    var userInput = "'; DROP TABLE Users; --";
+    var users = db.Users.Where(u => u.Name == userInput).ToList();
+}
+```
+
+🛡️ **防護原理**
+
+ORM 會幫你把 `userInput` 當成**資料（data）**，而不是 SQL 的一部分：
+
+- **資料庫**根本不會理會裡面那串奇怪的字
+- **只當成查詢條件**來處理
+- **完全隔離**指令與資料
+
+#### 2.2 參數化查詢
+
+🔒 **背後機制**
+
+ORM 背後其實是把你的查詢轉換成像這樣的參數化 SQL：
+
+```sql
+SELECT * FROM Users WHERE Name = @p0
+-- @p0 = "'; DROP TABLE Users; --"
+```
+
+📋 **參數化優勢**
+
+- **@p0 是參數**：明確標示為資料值
+- **資料庫會把它當成純文字資料**：不會解析為 SQL 指令
+- **不會執行裡面的指令**：完全分離資料與邏輯
+- **分離資料與邏輯的設計**：避免資料被誤當成命令來執行
+
+#### 2.3 原始 SQL 安全
+
+🛡️ **即使要寫原始 SQL，ORM 還是能保護你**
+
+```csharp
+var users = db.Users
+    .FromSqlRaw("SELECT * FROM Users WHERE Name = {0}", userInput)
+    .ToList();
+```
+
+✅ **安全保證**
+
+這樣寫 ORM 還是會幫你用參數化方式包裝 `{0}`，一樣安全：
+
+- **自動參數化**：ORM 自動將 `{0}` 轉換為安全參數
+- **保持靈活性**：可以寫原始 SQL 但不失安全性
+- **最佳實踐**：結合手寫 SQL 的靈活性與 ORM 的安全性
