@@ -15,6 +15,10 @@
   - [1.6 實體與介面](#16-實體與介面)
     - [1.6.1 介面變數與實體物件](#161-介面變數與實體物件)
     - [1.6.2 GetType() 與型別判斷](#162-gettype-與型別判斷)
+  - [1.7 Closure 閉包](#17-closure-閉包)
+    - [1.7.1 延後執行的陷阱](#171-延後執行的陷阱)
+    - [1.7.2 點擊次數 Counter](#172-點擊次數-counter)
+    - [1.7.3 記住外部變數的威力](#173-記住外部變數的威力)
 ---
 
 ### 1.1 抽取共用驗證邏輯9
@@ -761,3 +765,468 @@ public class PaymentService
 > 2. **多型的威力**：相同介面可以有不同實作，讓程式具有高度彈性和可擴展性
 > 3. **型別檢查工具**：善用 `GetType()`、`typeof()`、`is` 和 `as` 來進行型別檢查和轉換
 > 4. **除錯友善**：在日誌中記錄實際型別資訊，有助於問題排查和系統監控
+
+### 1.7 Closure 閉包
+
+Closure 就是 lambda 把用到的外部變數「包起來、記住」的能力。
+
+#### 1.7.1 延後執行的陷阱
+
+##### 🎯 核心概念理解
+
+**Lambda 是「延後執行」的，而方法參數是「當下就執行」的。**
+
+- **方法呼叫（傳參數）** → 立刻執行 → 當下的值是什麼就拿什麼
+- **Lambda（或閉包）** → 先存下來、之後才執行 → 那時變數可能早就變了！
+
+##### 📝 案例探討
+
+**方法傳參數 = 「立刻做這件事」**
+
+```csharp
+void Show(int n) 
+{
+    Console.WriteLine(n);
+}
+
+for (int i = 0; i < 5; i++)
+{
+    Show(i); // 當下的 i 是多少就傳進去
+}
+```
+
+**執行結果：**
+```
+0
+1
+2
+3
+4
+```
+
+這裡是「現在馬上」把 i 的值傳進 `Show()`，所以每次呼叫都是當下的值。
+
+**Lambda = 「先記下做法，之後才做」**
+
+```csharp
+var actions = new List<Action>();
+
+for (int i = 0; i < 5; i++)
+{
+    actions.Add(() => Console.WriteLine(i)); // 只是記下「到時候要印 i」, 這時候把 i 參考包近來
+}
+
+actions.ForEach(a => a.Invoke()); // 現在才真正做, 此時的 i 已經都是 5
+```
+
+**執行結果：**
+```
+5
+5
+5
+5
+5
+```
+
+> **🚨 問題分析**：Lambda 表達式捕獲的是變數 `i` 的**參考**，而不是值的副本。當 Lambda 實際執行時，`i` 的值已經是迴圈結束後的 5。
+
+##### ✅ 解決方案
+
+**在 Lambda 裡面用 loop 變數，要複製一份出來再用！**
+
+```csharp
+var actions = new List<Action>();
+
+for (int i = 0; i < 5; i++)
+{
+    int copy = i; // 建立區域變數副本
+    actions.Add(() => Console.WriteLine(copy)); // 捕獲 copy 而不是 i, 每次的參考都不一樣
+}
+
+actions.ForEach(a => a.Invoke());
+```
+
+**執行結果：**
+```
+0
+1
+2
+3
+4
+```
+
+##### 📊 比較表格
+
+| 比較項目 | 傳參數方法 | Lambda 閉包 |
+|----------|------------|-------------|
+| **存的東西** | 傳進來時的「值副本」 | 外部變數的「參考」 |
+| **是否獨立** | ✅ 是 | ❌ 否，共用 |
+| **是否會被改變** | ❌ 不會 | ✅ 會（如果外部變了） |
+| **解法** | 無需處理 | 要複製變數成 `copy = i` |
+
+##### 🔍 深入理解
+
+**為什麼會發生這種情況？**
+
+1. **編譯器行為**：編譯器會將 Lambda 表達式轉換為匿名方法和類別
+2. **變數捕獲**：Lambda 捕獲的是變數的參考，而不是值
+3. **延遲執行**：Lambda 直到被呼叫時才真正執行
+
+**編譯器背後的轉換（概念性）：**
+```csharp
+// 原始程式碼
+for (int i = 0; i < 5; i++)
+{
+    actions.Add(() => Console.WriteLine(i));
+}
+
+// 概念上編譯器產生的程式碼
+var displayClass = new ClosureDisplayClass();
+for (displayClass.i = 0; displayClass.i < 5; displayClass.i++)
+{
+    actions.Add(displayClass.Lambda);
+}
+
+class ClosureDisplayClass
+{
+    public int i; // 共用的變數
+    public void Lambda() => Console.WriteLine(i);
+}
+```
+
+#### 1.7.2 點擊次數 Counter
+
+##### 🎯 實際應用範例
+
+以下範例展示了閉包如何保持狀態，建立一個會記住點擊次數的計數器：
+
+```csharp
+public static Action CreateClickCounter()
+{
+    int count = 0;
+    return () => {
+        count++;
+        Console.WriteLine($"你已經點了 : {count} 次!!@@@");
+    };
+}
+```
+
+##### 🔍 閉包機制分析
+
+**關鍵概念理解：**
+
+`return () => { ... }` 是一個**匿名函式（lambda）**，它「捕捉了 count」，所以 `count` 被放進編譯器隱藏生成的物件裡。
+
+##### 📋 編譯器轉換過程
+
+**你寫的版本：**
+```csharp
+Func<int> CreateCounter()
+{
+    int count = 0;
+    return () => ++count;
+}
+```
+
+**編譯器轉換版本：**
+```csharp
+class Closure
+{
+    public int count = 0;
+    public int GetNext()
+    {
+        return ++count;
+    }
+}
+
+Func<int> CreateCounter()
+{
+    Closure closure = new Closure();
+    return closure.GetNext;
+}
+```
+
+##### ⚡ 重要轉換說明
+
+**變數提升：**
+- `count` 原本是區域變數 → 被提升為 `Closure` 類別的欄位
+- lambda 不再只是一個方法，而是「帶著記憶體（狀態）的 delegate」
+- 即使 `CreateCounter()` 執行完畢，closure 物件還活著（因為 delegate 持有參考）
+
+##### 💻 執行結果
+
+```csharp
+var counter = CreateClickCounter();
+counter(); // 你已經點了 : 1 次!!@@@
+counter(); // 你已經點了 : 2 次!!@@@
+counter(); // 你已經點了 : 3 次!!@@@
+```
+
+##### 🎯 實際應用場景
+
+**場景一：事件計數器**
+```csharp
+public static Action CreateEventCounter(string eventName)
+{
+    int count = 0;
+    DateTime firstCall = DateTime.Now;
+    
+    return () => {
+        count++;
+        var elapsed = DateTime.Now - firstCall;
+        Console.WriteLine($"{eventName} 觸發第 {count} 次，距離首次觸發已過 {elapsed.TotalSeconds:F1} 秒");
+    };
+}
+
+// 使用方式
+var buttonClickCounter = CreateEventCounter("按鈕點擊");
+var apiCallCounter = CreateEventCounter("API 呼叫");
+
+buttonClickCounter(); // 按鈕點擊 觸發第 1 次，距離首次觸發已過 0.0 秒
+buttonClickCounter(); // 按鈕點擊 觸發第 2 次，距離首次觸發已過 1.2 秒
+apiCallCounter();     // API 呼叫 觸發第 1 次，距離首次觸發已過 0.0 秒
+```
+
+**場景二：累積計算器**
+```csharp
+public static Func<int, int> CreateAccumulator(int initialValue = 0)
+{
+    int total = initialValue;
+    
+    return (int value) => {
+        total += value;
+        Console.WriteLine($"累積值: {total}");
+        return total;
+    };
+}
+
+// 使用方式
+var accumulator = CreateAccumulator(100);
+accumulator(10); // 累積值: 110
+accumulator(20); // 累積值: 130
+accumulator(-5); // 累積值: 125
+```
+
+**場景三：狀態機模擬**
+```csharp
+public static Action<string> CreateStateMachine()
+{
+    string currentState = "待機";
+    var stateHistory = new List<string>();
+    
+    return (string newState) => {
+        Console.WriteLine($"狀態轉換: {currentState} → {newState}");
+        stateHistory.Add(currentState);
+        currentState = newState;
+        Console.WriteLine($"歷史記錄: [{string.Join(" → ", stateHistory)}] → {currentState}");
+    };
+}
+
+// 使用方式
+var stateMachine = CreateStateMachine();
+stateMachine("運行中");  // 狀態轉換: 待機 → 運行中
+stateMachine("暫停");    // 狀態轉換: 運行中 → 暫停
+stateMachine("停止");    // 狀態轉換: 暫停 → 停止
+```
+
+##### 🚨 注意事項
+
+**記憶體生命週期：**
+- 閉包會延長被捕獲變數的生命週期
+- 即使方法執行完畢，被捕獲的變數仍然存在於記憶體中
+- 需要注意潛在的記憶體洩漏風險
+
+**執行緒安全：**
+- 多個執行緒同時呼叫同一個閉包時需要考慮執行緒安全
+- 如有需要，應該加入適當的鎖定機制
+
+> **🌟 重點提醒**
+> 
+> 1. **狀態保持**：閉包能夠保持區域變數的狀態，即使外層方法已經執行完畢
+> 2. **編譯器魔法**：編譯器會自動將閉包轉換為類別，並處理變數提升
+> 3. **記憶體影響**：閉包會影響變數的生命週期，需要注意記憶體管理
+> 4. **實用模式**：閉包是實現計數器、累積器、狀態機等模式的強大工具
+
+#### 1.7.3 記住外部變數的威力
+
+##### 🎯 實際業務場景範例
+
+以下範例展示了閉包如何捕獲外部變數，在實際業務開發中的應用：
+
+```csharp
+var promotionTagIds = GetPromotionTagIds();
+var outerIds = GetProductOuterIds();
+var targetTypeEnum = PromotionTargetType.Product;
+
+Action action = () => this.UpdateProductSkuOuterIdTag(promotionTagIds, outerIds, targetTypeEnum);
+```
+
+##### 🔍 閉包變數捕獲分析
+
+**關鍵概念理解：**
+
+這裡的 lambda `() => ...` 就是個閉包。它**沒有參數**，但它裡面用了「外部的變數」：
+
+- `promotionTagIds`
+- `outerIds` 
+- `targetTypeEnum`
+
+##### 📋 閉包特性解析
+
+**無參數閉包：**
+- Lambda 表達式沒有接收任何參數 `()`
+- 但能夠存取定義時的外部變數
+- 這些變數被「捕獲」到閉包中
+
+**變數生命週期延長：**
+- 即使原本的方法執行完畢，這些變數依然可以被 `action` 存取
+- 編譯器會將這些變數提升到一個隱藏的類別中
+
+##### 🔧 編譯器轉換機制
+
+**原始程式碼：**
+```csharp
+public void ProcessPromotion()
+{
+    var promotionTagIds = GetPromotionTagIds();
+    var outerIds = GetProductOuterIds(); 
+    var targetTypeEnum = PromotionTargetType.Product;
+    
+    Action action = () => this.UpdateProductSkuOuterIdTag(promotionTagIds, outerIds, targetTypeEnum);
+    
+    // 可能在稍後的某個時間點執行
+    ExecuteLater(action);
+}
+```
+
+**編譯器概念性轉換：**
+```csharp
+class ClosureDisplayClass
+{
+    public List<int> promotionTagIds;
+    public List<string> outerIds;
+    public PromotionTargetType targetTypeEnum;
+    public YourClass instance; // 保存 this 參考
+    
+    public void CapturedMethod()
+    {
+        instance.UpdateProductSkuOuterIdTag(promotionTagIds, outerIds, targetTypeEnum);
+    }
+}
+
+public void ProcessPromotion()
+{
+    var closure = new ClosureDisplayClass();
+    closure.instance = this;
+    closure.promotionTagIds = GetPromotionTagIds();
+    closure.outerIds = GetProductOuterIds();
+    closure.targetTypeEnum = PromotionTargetType.Product;
+    
+    Action action = closure.CapturedMethod;
+    ExecuteLater(action);
+}
+```
+
+##### 💡 實際應用場景
+
+**場景一：非同步任務排程**
+```csharp
+public void SchedulePromotionUpdate()
+{
+    var promotionId = GetCurrentPromotionId();
+    var updateTime = DateTime.Now.AddHours(1);
+    var userEmail = GetCurrentUserEmail();
+    
+    // 排程任務，稍後執行
+    Task.Delay(TimeSpan.FromHours(1)).ContinueWith(_ =>
+    {
+        // 這個 lambda 捕獲了外部變數
+        LogPromotionUpdate(promotionId, updateTime, userEmail);
+        SendNotificationEmail(userEmail, $"促銷 {promotionId} 已更新");
+    });
+}
+```
+
+**場景二：事件處理器設定**
+```csharp
+public void SetupEventHandlers()
+{
+    var connectionString = GetDatabaseConnectionString();
+    var logLevel = GetCurrentLogLevel();
+    var userId = GetCurrentUserId();
+    
+    // 設定各種事件處理器，都捕獲了相同的外部變數
+    OnDataUpdated += () => LogDatabaseChange(connectionString, userId, "Data Updated", logLevel);
+    OnUserLogin += () => LogDatabaseChange(connectionString, userId, "User Login", logLevel);
+    OnError += () => LogDatabaseChange(connectionString, userId, "Error Occurred", logLevel);
+}
+```
+
+**場景三：條件式操作佇列**
+```csharp
+public List<Action> BuildOperationQueue()
+{
+    var operations = new List<Action>();
+    var batchId = Guid.NewGuid();
+    var timestamp = DateTime.Now;
+    var currentUser = GetCurrentUser();
+    
+    // 根據不同條件建立操作，每個都記住相同的上下文
+    if (ShouldUpdateProducts())
+    {
+        operations.Add(() => UpdateProducts(batchId, timestamp, currentUser));
+    }
+    
+    if (ShouldSendNotifications())
+    {
+        operations.Add(() => SendBatchNotifications(batchId, timestamp, currentUser));
+    }
+    
+    if (ShouldGenerateReport())
+    {
+        operations.Add(() => GenerateProcessingReport(batchId, timestamp, currentUser));
+    }
+    
+    return operations;
+}
+```
+
+##### ⚡ 使用優勢
+
+**程式碼簡潔：**
+- 不需要建立額外的類別來傳遞參數
+- 避免繁瑣的參數傳遞
+- 保持程式碼的可讀性
+
+**上下文保持：**
+- 自動捕獲執行環境的狀態
+- 確保稍後執行時能存取到正確的變數值
+- 適合非同步或延遲執行場景
+
+**彈性設計：**
+- 可以動態決定要捕獲哪些變數
+- 支援條件式的操作建構
+- 方便實現策略模式和命令模式
+
+##### 🚨 注意事項
+
+**變數修改風險：**
+```csharp
+var items = new List<string> { "A", "B", "C" };
+Action action = () => Console.WriteLine($"Items: {string.Join(",", items)}");
+
+items.Add("D"); // 修改了被捕獲的變數
+action(); // 輸出：Items: A,B,C,D （包含了後來新增的 "D"）
+```
+
+**記憶體洩漏考量：**
+- 閉包會保持對捕獲變數的參考
+- 大型物件可能無法被垃圾收集
+- 需要注意變數的生命週期管理
+
+> **🌟 重點提醒**
+> 
+> 1. **變數捕獲**：閉包能夠捕獲外部作用域的任何變數，包括區域變數、參數和類別成員
+> 2. **無參數威力**：即使 lambda 沒有參數，也能透過變數捕獲存取外部狀態
+> 3. **延遲執行優勢**：非常適合非同步操作、事件處理和延遲執行場景
+> 4. **記憶體管理**：要注意被捕獲變數的生命週期，避免意外的記憶體洩漏

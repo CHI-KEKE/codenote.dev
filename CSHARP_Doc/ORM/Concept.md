@@ -45,6 +45,11 @@
   - [2. 生命週期問題](#2-生命週期問題)
     - [2.1 記憶體洩漏](#21-記憶體洩漏)
     - [2.2 資料一致性問題](#22-資料一致性問題)
+  - [3. Scoped 生命週期流程](#3-scoped-生命週期流程)
+    - [3.1 HTTP Request 進入](#31-http-request-進入)
+    - [3.2 依賴注入解析](#32-依賴注入解析)
+    - [3.3 DbContext 運作](#33-dbcontext-運作)
+    - [3.4 Request 結束處理](#34-request-結束處理)
 - [七、ORM 防範 SQL Injection](#七orm-防範-sql-injection)
   - [1. SQL Injection 威脅](#1-sql-injection-威脅)
     - [1.1 攻擊原理](#11-攻擊原理)
@@ -446,6 +451,96 @@ using var scope = new TransactionScope();
 // ... 執行多個 DbContext 操作
 scope.Complete();
 ```
+
+### 3. Scoped 生命週期流程
+
+#### 3.1 HTTP Request 進入
+
+🌐 **Scope 建立**
+
+當一個 HTTP Request 抵達 ASP.NET Core 應用程式時，ASP.NET Core 會為這個請求建立一個 **Scope**。
+
+📋 **Scope 概念**
+
+這個 Scope 是整個請求期間用來管理 **scoped 服務**的容器。
+
+#### 3.2 依賴注入解析
+
+🔍 **DI 容器查找**
+
+當控制器、服務或儲存庫（Repository）需要使用 `WebStoreDbContext` 時，DI 容器會在當前 Scope 中查找是否已存在實例：
+
+📦 **解析流程**
+
+**第一次解析：**
+- 沒有現成的實例
+- 容器會呼叫 `WebStoreDbContext` 的建構式
+- 建立一個新的實例
+- 把它註冊到此 Scope 中
+
+**後續解析：**
+- 在同一個 HTTP Request 中的其他位置請求 `WebStoreDbContext`
+- 都會返回同一個已存在的實例
+
+#### 3.3 DbContext 運作
+
+##### 🔗 延遲開啟連線
+
+當執行資料庫查詢或更新時，DbContext 會根據需要延遲打開資料庫連線。
+
+##### 📝 變更追蹤
+
+同一個 DbContext 會追蹤所有在請求期間進行的實體：
+- **新增操作**
+- **修改操作** 
+- **刪除操作**
+
+**累積到內部的單位工作（Unit of Work）中**
+
+##### 🗃️ 快取與身份解析
+
+如果在同一個 Scope 中多次查詢相同資料：
+- **DbContext 能確保返回相同的物件參考**
+- **避免重複建立實例而導致狀態不一致**
+
+##### 💾 SaveChanges 與交易管理
+
+當控制器或服務呼叫 `SaveChanges()` 時：
+
+**交易處理：**
+- 所有累積在 DbContext 內的變更會在**一個交易中一次性提交**到資料庫
+- 確保了操作的**原子性**
+- **所有變更要麼全部成功，要麼全部回滾**
+
+#### 3.4 Request 結束處理
+
+🔚 **自動釋放機制**
+
+當整個 HTTP Request 完成後，ASP.NET Core 會：
+
+1. **自動釋放該 Scope**
+2. **呼叫 Scope 中所有 IDisposable 物件的 Dispose 方法**
+
+📋 **DbContext Dispose 流程**
+
+**釋放內部資源：**
+- **關閉開啟中的資料庫連線**
+- **清除變更追蹤記錄**
+- **確保不會造成資源泄漏**
+
+🎯 **優點與影響**
+
+**單一實例共享：**
+- 整個請求內部只會有一個 DbContext 實例
+- 確保所有資料操作屬於同一個單位工作
+
+**交易一致性：**
+- 所有變更可在同一個交易中處理
+- 降低部分成功部分失敗導致的數據不一致風險
+
+**內部快取：**
+- 相同資料多次查詢可利用快取機制
+- 提高效能並保持一致性
 
 ## 七、ORM 防範 SQL Injection
 
