@@ -19,6 +19,10 @@
     - [1.7.1 延後執行的陷阱](#171-延後執行的陷阱)
     - [1.7.2 點擊次數 Counter](#172-點擊次數-counter)
     - [1.7.3 記住外部變數的威力](#173-記住外部變數的威力)
+  - [1.8 count / flag / batch + while loop 使用](#18-count--flag--batch--while-loop-使用)
+    - [1.8.1 基本計數與標記模式](#181-基本計數與標記模式)
+    - [1.8.2 批次處理模式](#182-批次處理模式)
+    - [1.8.3 複合條件控制](#183-複合條件控制)
 ---
 
 ### 1.1 抽取共用驗證邏輯9
@@ -1230,3 +1234,374 @@ action(); // 輸出：Items: A,B,C,D （包含了後來新增的 "D"）
 > 2. **無參數威力**：即使 lambda 沒有參數，也能透過變數捕獲存取外部狀態
 > 3. **延遲執行優勢**：非常適合非同步操作、事件處理和延遲執行場景
 > 4. **記憶體管理**：要注意被捕獲變數的生命週期，避免意外的記憶體洩漏
+
+### 1.8 count / flag / batch + while loop 使用
+
+在處理大量資料或需要複雜條件控制的場景中，合理使用計數器 (count)、標記 (flag) 和批次處理 (batch) 搭配 while 迴圈，可以讓程式碼更有效率且更容易維護。
+
+#### 1.8.1 基本計數與標記模式
+
+##### 📊 計數器控制範例
+
+以下範例展示如何使用計數器來控制迴圈執行：
+
+```csharp
+void Main()
+{
+    // 模擬處理大量資料，每次處理固定數量
+    var dataList = Enumerable.Range(1, 100).ToList();
+    ProcessDataWithCounter(dataList);
+}
+
+public void ProcessDataWithCounter(List<int> dataList)
+{
+    int processedCount = 0;
+    int batchSize = 10;
+    int index = 0;
+    
+    while (index < dataList.Count)
+    {
+        // 處理當前項目
+        var currentItem = dataList[index];
+        Console.WriteLine($"處理項目: {currentItem}");
+        
+        processedCount++;
+        index++;
+        
+        // 每處理 10 個項目就暫停一下
+        if (processedCount % batchSize == 0)
+        {
+            Console.WriteLine($"已處理 {processedCount} 個項目，暫停 100ms...");
+            Thread.Sleep(100);
+        }
+    }
+    
+    Console.WriteLine($"總共處理了 {processedCount} 個項目");
+}
+```
+
+##### 🚩 標記控制範例
+
+使用布林標記來控制複雜的迴圈條件：
+
+```csharp
+void Main()
+{
+    var numbers = new List<int> { 1, 5, 8, 12, 15, 20, 25, 30 };
+    FindTargetWithFlag(numbers, 15);
+}
+
+public void FindTargetWithFlag(List<int> numbers, int target)
+{
+    bool found = false;
+    bool shouldContinue = true;
+    int attempts = 0;
+    int maxAttempts = 5;
+    int index = 0;
+    
+    while (shouldContinue && !found && index < numbers.Count)
+    {
+        attempts++;
+        var current = numbers[index];
+        
+        Console.WriteLine($"嘗試 {attempts}: 檢查數字 {current}");
+        
+        if (current == target)
+        {
+            found = true;
+            Console.WriteLine($"✅ 找到目標數字 {target} 在位置 {index}");
+        }
+        else if (attempts >= maxAttempts)
+        {
+            shouldContinue = false;
+            Console.WriteLine($"❌ 超過最大嘗試次數 {maxAttempts}，停止搜尋");
+        }
+        
+        index++;
+    }
+    
+    if (!found && shouldContinue)
+    {
+        Console.WriteLine($"❌ 在清單中找不到目標數字 {target}");
+    }
+}
+```
+
+#### 1.8.2 批次處理模式
+
+##### 📦 資料庫批次操作範例
+
+在處理大量資料庫操作時，批次處理可以顯著提升效能：
+
+```csharp
+void Main()
+{
+    var userIds = Enumerable.Range(1, 1000).ToList();
+    ProcessUsersBatch(userIds);
+}
+
+public void ProcessUsersBatch(List<int> userIds)
+{
+    int batchSize = 50;
+    int currentIndex = 0;
+    int totalProcessed = 0;
+    
+    while (currentIndex < userIds.Count)
+    {
+        // 取得當前批次
+        var currentBatch = userIds
+            .Skip(currentIndex)
+            .Take(batchSize)
+            .ToList();
+        
+        // 模擬批次資料庫操作
+        ProcessBatch(currentBatch);
+        
+        totalProcessed += currentBatch.Count;
+        currentIndex += batchSize;
+        
+        Console.WriteLine($"已處理 {totalProcessed}/{userIds.Count} 個使用者");
+        
+        // 批次間的延遲，避免對資料庫造成過大壓力
+        if (currentIndex < userIds.Count)
+        {
+            Thread.Sleep(50);
+        }
+    }
+    
+    Console.WriteLine($"✅ 批次處理完成，總共處理 {totalProcessed} 個使用者");
+}
+
+private void ProcessBatch(List<int> userBatch)
+{
+    // 模擬資料庫批次操作
+    Console.WriteLine($"正在處理批次：使用者 ID {userBatch.First()} 到 {userBatch.Last()}");
+    
+    // 這裡可以是實際的資料庫操作
+    // 例如：批次更新、批次插入等
+    foreach (var userId in userBatch)
+    {
+        // 模擬處理每個使用者
+        // UpdateUserInDatabase(userId);
+    }
+}
+```
+
+##### 🔄 檔案批次讀取範例
+
+處理大型檔案時的批次讀取策略：
+
+```csharp
+void Main()
+{
+    string filePath = @"C:\temp\large_file.txt";
+    ReadFileInBatches(filePath);
+}
+
+public void ReadFileInBatches(string filePath)
+{
+    int batchSize = 1000; // 每次讀取 1000 行
+    int lineCount = 0;
+    int batchNumber = 1;
+    bool hasMoreData = true;
+    
+    using (var reader = new StreamReader(filePath))
+    {
+        while (hasMoreData && !reader.EndOfStream)
+        {
+            var currentBatch = new List<string>();
+            int linesInCurrentBatch = 0;
+            
+            // 讀取一個批次的資料
+            while (linesInCurrentBatch < batchSize && !reader.EndOfStream)
+            {
+                string line = reader.ReadLine();
+                if (line != null)
+                {
+                    currentBatch.Add(line);
+                    linesInCurrentBatch++;
+                    lineCount++;
+                }
+            }
+            
+            // 處理當前批次
+            if (currentBatch.Count > 0)
+            {
+                ProcessLineBatch(currentBatch, batchNumber);
+                Console.WriteLine($"批次 {batchNumber}: 處理了 {currentBatch.Count} 行資料");
+                batchNumber++;
+            }
+            else
+            {
+                hasMoreData = false;
+            }
+            
+            // 記憶體管理：清理當前批次
+            currentBatch.Clear();
+        }
+    }
+    
+    Console.WriteLine($"檔案讀取完成，總共處理 {lineCount} 行資料，分成 {batchNumber - 1} 個批次");
+}
+
+private void ProcessLineBatch(List<string> lines, int batchNumber)
+{
+    // 模擬批次處理邏輯
+    foreach (var line in lines)
+    {
+        // 處理每一行資料
+        // 例如：解析、轉換、驗證等
+    }
+}
+```
+
+#### 1.8.3 複合條件控制
+
+##### 🎯 多重條件組合範例
+
+結合計數器、標記和批次處理的複合控制邏輯：
+
+```csharp
+void Main()
+{
+    var dataProcessor = new AdvancedDataProcessor();
+    dataProcessor.ProcessDataWithComplexControl();
+}
+
+public class AdvancedDataProcessor
+{
+    private int maxRetries = 3;
+    private int batchSize = 20;
+    private int maxErrorsPerBatch = 5;
+    
+    public void ProcessDataWithComplexControl()
+    {
+        var dataSource = GenerateTestData(200);
+        
+        int totalProcessed = 0;
+        int totalErrors = 0;
+        int currentIndex = 0;
+        bool shouldContinue = true;
+        int globalRetryCount = 0;
+        
+        while (shouldContinue && currentIndex < dataSource.Count)
+        {
+            // 取得當前批次
+            var currentBatch = dataSource
+                .Skip(currentIndex)
+                .Take(batchSize)
+                .ToList();
+            
+            // 批次處理結果
+            var batchResult = ProcessBatchWithErrorHandling(currentBatch);
+            
+            totalProcessed += batchResult.SuccessCount;
+            totalErrors += batchResult.ErrorCount;
+            
+            // 檢查是否需要重試整個批次
+            if (batchResult.ErrorCount > maxErrorsPerBatch)
+            {
+                globalRetryCount++;
+                Console.WriteLine($"⚠️ 批次錯誤過多，進行第 {globalRetryCount} 次重試...");
+                
+                if (globalRetryCount >= maxRetries)
+                {
+                    shouldContinue = false;
+                    Console.WriteLine($"❌ 達到最大重試次數 {maxRetries}，停止處理");
+                }
+                // 不增加 currentIndex，重新處理同一批次
+            }
+            else
+            {
+                // 批次成功，移動到下一批次
+                currentIndex += batchSize;
+                globalRetryCount = 0; // 重置重試計數器
+                
+                Console.WriteLine($"✅ 批次處理成功 - 成功: {batchResult.SuccessCount}, 錯誤: {batchResult.ErrorCount}");
+            }
+            
+            // 安全檢查：避免無窮迴圈
+            if (totalErrors > dataSource.Count * 0.5) // 如果錯誤率超過 50%
+            {
+                shouldContinue = false;
+                Console.WriteLine($"❌ 錯誤率過高，停止處理");
+            }
+        }
+        
+        Console.WriteLine($"處理完成 - 總計處理: {totalProcessed}, 總計錯誤: {totalErrors}");
+    }
+    
+    private BatchResult ProcessBatchWithErrorHandling(List<string> batch)
+    {
+        int successCount = 0;
+        int errorCount = 0;
+        
+        foreach (var item in batch)
+        {
+            try
+            {
+                // 模擬處理邏輯，隨機產生錯誤
+                if (ProcessSingleItem(item))
+                {
+                    successCount++;
+                }
+                else
+                {
+                    errorCount++;
+                }
+            }
+            catch (Exception ex)
+            {
+                errorCount++;
+                Console.WriteLine($"處理項目 {item} 時發生錯誤: {ex.Message}");
+            }
+        }
+        
+        return new BatchResult { SuccessCount = successCount, ErrorCount = errorCount };
+    }
+    
+    private bool ProcessSingleItem(string item)
+    {
+        // 模擬處理邏輯，30% 機率失敗
+        var random = new Random();
+        return random.Next(100) > 30;
+    }
+    
+    private List<string> GenerateTestData(int count)
+    {
+        return Enumerable.Range(1, count)
+            .Select(i => $"Item_{i:D3}")
+            .ToList();
+    }
+    
+    private class BatchResult
+    {
+        public int SuccessCount { get; set; }
+        public int ErrorCount { get; set; }
+    }
+}
+```
+
+##### 🎯 複合條件的優勢
+
+**提升可靠性：**
+- ✅ 多重檢查機制確保程式穩定性
+- ✅ 錯誤處理和重試機制
+- ✅ 避免無窮迴圈的安全檢查
+
+**效能最佳化：**
+- 🚀 批次處理減少 I/O 操作次數
+- 🚀 計數器控制資源使用
+- 🚀 標記避免不必要的計算
+
+**程式碼可維護性：**
+- 🔧 清晰的條件邏輯
+- 🔧 易於調整的參數設定
+- 🔧 詳細的執行狀態回饋
+
+> **🌟 重點提醒**
+> 
+> 1. **避免無窮迴圈**：始終設置適當的退出條件和安全檢查
+> 2. **記憶體管理**：在批次處理中及時清理不需要的物件
+> 3. **錯誤處理**：為每個可能失敗的操作添加適當的例外處理
+> 4. **效能監控**：記錄處理進度和效能指標，便於最佳化和除錯

@@ -26,6 +26,16 @@
     - [6.1 Named Registration 機制](#61-named-registration-機制)
     - [6.2 動態解析實作](#62-動態解析實作)
     - [6.3 應用優勢](#63-應用優勢)
+  - [7. IServiceProvider 注入問題與解法](#7-iserviceprovider-注入問題與解法)
+    - [7.1 問題案例](#71-問題案例)
+    - [7.2 解法 A：Keyed Services (.NET 8+)](#72-解法-a-keyed-services-net-8)
+    - [7.3 解法 B：策略模式 + 字典](#73-解法-b-策略模式--字典)
+    - [7.4 解法 C：Factory 介面封裝](#74-解法-c-factory-介面封裝)
+  - [8. 循環依賴問題與解法](#8-循環依賴問題與解法)
+    - [8.1 問題說明](#81-問題說明)
+    - [8.2 產生原因](#82-產生原因)
+    - [8.3 解決方法：抽出更高階類別](#83-解決方法抽出更高階類別)
+    - [8.4 實作範例](#84-實作範例)
 - [二、概念](#二概念)
   - [1. 組合根（Composition Root）](#1-組合根composition-root)
     - [1.1 核心職責](#11-核心職責)
@@ -448,6 +458,27 @@ builder.RegisterType<PaymentMiddlewareProvider>().Named<IPaymentServiceProviderB
 builder.RegisterType<Nine1PaymentProvider>().Named<IPaymentServiceProviderBase>(nameof(PaymentServiceProviderTypeEnum.Nine1Payment));
 ```
 
+##### 🔧 **PayChannelService 解析案例**
+
+以下是另一個實際應用案例，展示如何透過 Named Registration 來解析支付通道服務：
+
+```csharp
+// 業務邏輯中的使用方式
+var (payChannelService, paymentPath) = this.ResolvePayChannelService(context);
+
+payChannelService = _payChannelServiceResolver.Resolve(acquiring);
+
+/// <summary>
+/// Resolve <see cref="IPayChannelService"/>
+/// </summary>
+/// <param name="payChannel">PayChannel</param>
+/// <returns><see cref="IPayChannelService"/></returns>
+public IPayChannelService Resolve(string payChannel)
+{
+    return this._lifetimeScope.ResolveNamed<IPayChannelService>(payChannel);
+}
+```
+
 #### 6.2 動態解析實作
 
 ⚡ **GetService 方法實作**
@@ -477,6 +508,41 @@ public IPaymentServiceProviderBase GetService(long shopId, string payProfileType
 }
 ```
 
+##### 🔄 **基於具體類型的動態解析**
+
+除了 Autofac 的 Named Registration，我們也可以使用 ASP.NET Core 原生 DI 容器搭配具體類型來實現動態服務解析：
+
+```csharp
+// Program.cs 中註冊具體實作服務
+builder.Services.AddScoped<RewardReachPriceWithCouponRuleService>();
+
+// RewardReachPriceWithCouponRuleService 實際上有實作 Interface
+public class RewardReachPriceWithCouponRuleService : RewardReachPriceRuleBaseService, IPromotionEngineRuleService
+{
+    // 實作內容
+}
+
+// 動態解析方法
+private IPromotionEngineRuleService GetRuleService(string typeDef) => typeDef switch
+{
+    nameof(PromotionEngineTypeDefEnum.RewardReachPriceWithCoupon) => 
+        this._serviceProvider.GetRequiredService<RewardReachPriceWithCouponRuleService>(),
+    // 其他類型的對應...
+    _ => throw new NotSupportedException($"不支援的促銷規則類型: {typeDef}")
+};
+
+// 應用端使用方式
+// 反序列化 Rule
+var ruleService = this.GetRuleService(promotion.PromotionEngine_TypeDef);
+var ruleEntity = ruleService.ParsePromotionEngineRuleObject(promotion.PromotionEngine_Rule);
+```
+
+**此方法的特點：**
+- **原生支援**：使用 ASP.NET Core 內建 DI 容器，無需額外相依性
+- **類型安全**：透過具體類型註冊，享有編譯時期類型檢查
+- **Pattern Matching**：利用 C# switch expression 提供清晰的對應邏輯
+- **介面統一**：所有服務都實作相同介面，確保API一致性
+
 #### 6.3 應用優勢
 
 🎯 **程式碼清潔度**
@@ -501,6 +567,360 @@ public IPaymentServiceProviderBase GetService(long shopId, string payProfileType
 - 結合策略模式（Strategy Pattern）實現動態行為選擇
 - 工廠模式（Factory Pattern）的現代化實作
 - 依賴反轉原則（Dependency Inversion Principle）的實際應用
+
+##### 📚 **進階參考資料**
+
+關於動態解析實作的更多技術細節和進階用法，可以參考：
+
+🔗 [如何在 Microsoft.Extensions.DependencyInjection 中為同一介面註冊多個實作](https://dotblogs.azurewebsites.net/yc421206/2021/05/21/how_to_register_the_same_interface_for_multiple_implement_microsoft_extensions_dependencyInjection)
+
+### 7. IServiceProvider 注入問題與解法
+
+#### 7.1 問題案例
+
+⚠️ **生命週期衝突場景**
+
+有時候我們會遇到這樣的情況：Validator 是 Singleton 類型的，但我們需要注入 Scoped 類型的服務，無法直接在建構子上相依。這時候往往會想到注入 `IServiceProvider` 來解決，但這其實不是最佳做法。
+
+**常見問題模式：**
+```csharp
+// ❌ 不推薦的做法
+public class MySingletonValidator
+{
+    private readonly IServiceProvider _serviceProvider;
+    
+    public MySingletonValidator(IServiceProvider serviceProvider)
+    {
+        _serviceProvider = serviceProvider; // 直接依賴容器
+    }
+    
+    public void Validate(string type)
+    {
+        var service = _serviceProvider.GetRequiredService<IScopedService>(); // Service Locator 反模式
+    }
+}
+```
+
+#### 7.2 解法 A：Keyed Services (.NET 8+)
+
+🎯 **最推薦的現代化解法**
+
+用 DI 直接幫你管理「Key → 服務」的對照表，你的類別只依賴「抽象」與「key」，不需要拿容器。
+
+##### 🔧 服務註冊
+
+```csharp
+// 針對不同規則，用 key 註冊對應的實作
+services.AddKeyedScoped<IPromotionEngineRuleService, DiscountReachGroupsPieceRuleService>(
+    nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece));
+
+services.AddKeyedScoped<IPromotionEngineRuleService, CommonRuleService>("__common");
+```
+
+##### 📋 使用方式 A-1：直接用 IKeyedServiceProvider
+
+```csharp
+public class PromotionRuleResolver(IKeyedServiceProvider keyed)
+{
+    private const string CommonKey = "__common";
+
+    private IPromotionEngineRuleService GetRuleService(string typeDef) => typeDef switch
+    {
+        nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece)
+            => keyed.GetRequiredKeyedService<IPromotionEngineRuleService>(
+                   nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece)),
+        _   => keyed.GetRequiredKeyedService<IPromotionEngineRuleService>(CommonKey)
+    };
+}
+```
+
+**優點：** 依賴的是專用的 keyed provider，範圍很小，不是萬能的 IServiceProvider。
+
+##### 🏭 使用方式 A-2：用「工廠委派」讓依賴更明確
+
+```csharp
+public class PromotionRuleResolver(Func<object, IPromotionEngineRuleService> getByKey)
+{
+    private const string CommonKey = "__common";
+
+    private IPromotionEngineRuleService GetRuleService(string typeDef) => typeDef switch
+    {
+        nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece)
+            => getByKey(nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece)),
+        _   => getByKey(CommonKey)
+    };
+}
+```
+
+**優點：** 你的類別只依賴一個「取服務的函式」，更容易替身（mock）測試。
+
+#### 7.3 解法 B：策略模式 + 字典
+
+🗂️ **任何版本可用的經典解法**
+
+每個規則實作自己宣告「我是哪個 typeDef」，在組裝時把它們做成字典。
+
+##### 🎯 介面與實作設計
+
+```csharp
+public interface IPromotionEngineRuleService
+{
+    string TypeDef { get; }  // 例如 "DiscountReachGroupsPiece"
+    Task ApplyAsync(...);
+}
+
+public class DiscountReachGroupsPieceRuleService : IPromotionEngineRuleService
+{
+    public string TypeDef => nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece);
+    public Task ApplyAsync(...) { /* ... */ }
+}
+
+public class CommonRuleService : IPromotionEngineRuleService
+{
+    public string TypeDef => "__common";
+    public Task ApplyAsync(...) { /* ... */ }
+}
+```
+
+##### 🔧 組裝與使用
+
+```csharp
+public class PromotionRuleResolver
+{
+    private readonly IReadOnlyDictionary<string, IPromotionEngineRuleService> _map;
+    private readonly IPromotionEngineRuleService _common;
+
+    public PromotionRuleResolver(IEnumerable<IPromotionEngineRuleService> services)
+    {
+        _map = services.ToDictionary(s => s.TypeDef, StringComparer.Ordinal);
+        _common = services.Single(s => s.TypeDef == "__common");
+    }
+
+    private IPromotionEngineRuleService GetRuleService(string typeDef)
+        => _map.TryGetValue(typeDef, out var svc) ? svc : _common;
+}
+```
+
+**優點：** 
+- 零 Service Locator
+- 依賴全顯性
+- 超好測試
+
+**💡 小技巧：** 如果建立服務很重，可把字典值改成 `Lazy<IPromotionEngineRuleService>`。
+
+#### 7.4 解法 C：Factory 介面封裝
+
+🏭 **漸進式改善方案**
+
+把「選服務」的邏輯搬到專屬工廠，之後要從 `_serviceProvider` 換到 A/B 的寫法，只改工廠就好。
+
+##### 🎯 Factory 介面設計
+
+```csharp
+public interface IPromotionRuleFactory
+{
+    IPromotionEngineRuleService Create(string typeDef);
+}
+
+public class PromotionRuleFactory : IPromotionRuleFactory
+{
+    private readonly IKeyedServiceProvider _keyed; // 或 Func<object, IPromotionEngineRuleService>
+    
+    public PromotionRuleFactory(IKeyedServiceProvider keyed) => _keyed = keyed;
+
+    public IPromotionEngineRuleService Create(string typeDef) => typeDef switch
+    {
+        nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece)
+            => _keyed.GetRequiredKeyedService<IPromotionEngineRuleService>(
+                   nameof(PromotionEngineTypeDefEnum.DiscountReachGroupsPiece)),
+        _ => _keyed.GetRequiredKeyedService<IPromotionEngineRuleService>("__common")
+    };
+}
+```
+
+##### 📋 使用端程式碼
+
+```csharp
+// 使用端
+public class PromotionRuleResolver(IPromotionRuleFactory factory)
+{
+    private IPromotionEngineRuleService GetRuleService(string typeDef) => factory.Create(typeDef);
+}
+```
+
+**優點：**
+- 小改就好，風險較低
+- 封裝容器依賴，未來容易替換
+- 依賴更加明確和可測試
+
+### 8. 循環依賴問題與解法
+
+#### 8.1 問題說明
+
+🔄 **雞生蛋、蛋生雞的困境**
+
+循環依賴是指 Class A 需要 Class B 才能工作，而 Class B 又需要 Class A 才能工作。DI 容器在建立物件時，會卡在「先要 A 還是先要 B？」這種雞生蛋、蛋生雞的情況，結果就會拋出例外。
+
+```csharp
+// ❌ 循環依賴範例 - 這會導致 DI 容器失敗
+Class A ← depends on → Class B
+    ↑                     ↓
+    └─── depends on ←─────┘
+```
+
+**典型錯誤訊息：**
+- `A circular dependency was detected`
+- `Cannot resolve service for type 'ClassA' because it has a circular dependency`
+
+#### 8.2 產生原因
+
+🧠 **設計問題根源**
+
+循環依賴通常反映了以下設計問題：
+
+**責任切不清：**
+- 兩個類別互相管彼此太多事
+- 職責邊界模糊，導致過度耦合
+- 每個類別都想要控制或了解對方的行為
+
+**流程被拆得太碎：**
+- 拆分過度細粒度，失去了整體性
+- 彼此都要知道對方的細節才能運作
+- 缺乏統一的協調機制
+
+#### 8.3 解決方法：抽出更高階類別
+
+🏗️ **Orchestrator 模式**
+
+解決循環依賴的核心思想是引入一個更高階的類別（通常稱為 Orchestrator 或 Coordinator），它的角色是：
+
+**統一協調：**
+- 不讓 A 和 B 直接知道對方的存在
+- 把「A 做什麼 → B 做什麼」這個流程集中管理
+- A 和 B 都只對這個新類別報告或由新類別呼叫
+
+**依賴重新組織：**
+- A 不再依賴 B
+- B 也不再依賴 A  
+- 兩者改成依賴同一個「更高階」類別
+- 循環依賴自然解除
+
+#### 8.4 實作範例
+
+##### ❌ **壞的範例：循環依賴**
+
+```csharp
+public class ClassA
+{
+    private readonly ClassB _b;
+    
+    public ClassA(ClassB b) => _b = b;
+
+    public void DoA()
+    {
+        Console.WriteLine("A 做了事情");
+        _b.DoB(); // A 依賴 B
+    }
+}
+
+public class ClassB
+{
+    private readonly ClassA _a;
+    
+    public ClassB(ClassA a) => _a = a;
+
+    public void DoB()
+    {
+        Console.WriteLine("B 做了事情");
+        _a.DoA(); // B 又依賴 A -> 循環依賴！
+    }
+}
+```
+
+**問題分析：**
+- ClassA 建構子需要 ClassB
+- ClassB 建構子需要 ClassA
+- DI 容器無法決定先建立哪一個
+
+##### ✅ **好的範例：抽出更高階類別**
+
+```csharp
+public class Orchestrator
+{
+    private readonly ClassA _a;
+    private readonly ClassB _b;
+
+    public Orchestrator(ClassA a, ClassB b)
+    {
+        _a = a;
+        _b = b;
+    }
+
+    public void Run()
+    {
+        _a.DoA();
+        _b.DoB();
+        // 統一管理 A 和 B 的協作流程
+    }
+}
+
+public class ClassA
+{
+    public void DoA()
+    {
+        Console.WriteLine("A 做了事情");
+        // 不再直接呼叫 B
+    }
+}
+
+public class ClassB
+{
+    public void DoB()
+    {
+        Console.WriteLine("B 做了事情");
+        // 不再直接呼叫 A
+    }
+}
+```
+
+**改善效果：**
+- ✅ ClassA 和 ClassB 不再互相依賴
+- ✅ 職責清楚：A 專心做 A 的事，B 專心做 B 的事
+- ✅ Orchestrator 負責協調整體流程
+- ✅ DI 容器可以順利建立所有物件
+
+**DI 註冊：**
+```csharp
+services.AddScoped<ClassA>();
+services.AddScoped<ClassB>();
+services.AddScoped<Orchestrator>();
+```
+
+**使用方式：**
+```csharp
+public class SomeController
+{
+    private readonly Orchestrator _orchestrator;
+    
+    public SomeController(Orchestrator orchestrator)
+    {
+        _orchestrator = orchestrator;
+    }
+    
+    public void SomeAction()
+    {
+        _orchestrator.Run(); // 透過 Orchestrator 協調 A 和 B
+    }
+}
+```
+
+##### 🎯 **設計原則總結**
+
+**避免循環依賴的關鍵：**
+- **單一職責**：每個類別專注於自己的核心功能
+- **依賴方向**：依賴應該是單向的，從具體到抽象
+- **協調分離**：將協調邏輯抽出到專門的協調者
+- **介面隔離**：使用介面減少直接類別依賴
 
 ---
 
