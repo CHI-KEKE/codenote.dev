@@ -12,6 +12,7 @@
     - [1.5.1 泛型計算器範例](#151-泛型計算器範例)
     - [1.5.2 Wrapper](#152-wrapper)
     - [1.5.3 泛型與快取](#153-泛型與快取)
+    - [1.5.4 泛型快取 - 進階版](#154-泛型快取-進階版)
   - [1.6 實體與介面](#16-實體與介面)
     - [1.6.1 介面變數與實體物件](#161-介面變數與實體物件)
     - [1.6.2 GetType() 與型別判斷](#162-gettype-與型別判斷)
@@ -563,6 +564,278 @@ var products = queryCache.GetOrCreate("category_electronics", () => ProductServi
 > 2. **記憶體管理**：監控快取大小，避免記憶體洩漏
 > 3. **執行緒安全**：在多執行緒環境中確保快取的執行緒安全性
 > 4. **資料一致性**：考慮快取更新和失效的策略
+
+#### 1.5.4 泛型快取 - 進階版
+
+在前面的簡單快取範例基礎上，我們可以建立一個更完整的快取解決方案，具備過期時間控制和執行緒安全特性。這個進階版本適合在實際專案中使用。
+
+##### 🔧 **進階快取實作**
+
+以下實作展示了一個具備過期機制和執行緒安全的泛型快取：
+
+```csharp
+public static class MemoryHelper
+{
+    /// <summary>
+    /// 執行緒安全的快取字典，儲存所有快取項目
+    /// </summary>
+    public static ConcurrentDictionary<string, object> dict = new();
+    
+    /// <summary>
+    /// 泛型快取擴展方法，支援過期時間控制
+    /// </summary>
+    /// <typeparam name="T">快取資料型別</typeparam>
+    /// <param name="cacheKey">快取索引鍵</param>
+    /// <param name="getData">取得資料的函式</param>
+    /// <param name="expiry">快取過期時間</param>
+    /// <returns>快取或新建立的資料</returns>
+    public static T GetOrSetCache<T>(this string cacheKey, Func<T> getData, TimeSpan expiry)
+    {
+        // 嘗試從快取中取得資料
+        if (dict.TryGetValue(cacheKey, out var obj) && obj is CacheItem<T> item)
+        {
+            // 檢查快取是否仍然有效
+            if (DateTime.Now < item.Expiration)
+            {
+                Console.WriteLine($"✅ 快取命中: {cacheKey}");
+                return item.Data;
+            }
+            
+            // 快取已過期，移除舊資料
+            dict.TryRemove(cacheKey, out _);
+            Console.WriteLine($"⏰ 快取過期已移除: {cacheKey}");
+        }
+        
+        // 建立新的快取項目
+        Console.WriteLine($"🔄 建立新快取: {cacheKey}");
+        var newData = getData();
+        var newItem = new CacheItem<T>
+        {
+            Data = newData,
+            Expiration = DateTime.Now.Add(expiry)
+        };
+
+        dict[cacheKey] = newItem;
+        return newData;
+    }
+}
+
+/// <summary>
+/// 泛型快取項目容器
+/// </summary>
+/// <typeparam name="T">快取資料型別</typeparam>
+public class CacheItem<T>
+{
+    /// <summary>
+    /// 快取的資料
+    /// </summary>
+    public T Data { get; set; }
+    
+    /// <summary>
+    /// 快取過期時間
+    /// </summary>
+    public DateTime Expiration { get; set; }
+}
+```
+
+##### 📝 **使用範例**
+
+**基本使用方式：**
+```csharp
+void Main()
+{
+    // 快取使用者資訊，5 分鐘過期
+    var userInfo = "user_123".GetOrSetCache(() =>
+    {
+        Console.WriteLine("正在從資料庫查詢使用者資訊...");
+        Thread.Sleep(1000); // 模擬資料庫查詢延遲
+        return new UserInfo { Id = 123, Name = "Allen", Email = "allen@example.com" };
+    }, TimeSpan.FromMinutes(5));
+    
+    Console.WriteLine($"取得使用者: {userInfo.Name}");
+    
+    // 再次呼叫，應該會使用快取
+    var cachedUserInfo = "user_123".GetOrSetCache(() =>
+    {
+        Console.WriteLine("這行不應該出現，因為應該使用快取");
+        return new UserInfo();
+    }, TimeSpan.FromMinutes(5));
+    
+    Console.WriteLine($"快取的使用者: {cachedUserInfo.Name}");
+}
+
+public class UserInfo
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string Email { get; set; }
+}
+```
+
+**複雜資料快取範例：**
+```csharp
+void Main()
+{
+    // 快取產品清單，10 分鐘過期
+    var products = "products_electronics".GetOrSetCache(() =>
+    {
+        Console.WriteLine("正在查詢電子產品清單...");
+        return new List<Product>
+        {
+            new() { Id = 1, Name = "iPhone 15", Price = 32900 },
+            new() { Id = 2, Name = "MacBook Pro", Price = 89900 },
+            new() { Id = 3, Name = "iPad Air", Price = 19900 }
+        };
+    }, TimeSpan.FromMinutes(10));
+    
+    Console.WriteLine($"取得 {products.Count} 個產品");
+    
+    // 快取計算結果，1 小時過期
+    var expensiveCalculation = "complex_formula_abc".GetOrSetCache(() =>
+    {
+        Console.WriteLine("執行複雜計算...");
+        Thread.Sleep(2000); // 模擬複雜計算
+        return Math.PI * Math.E * 12345.67m;
+    }, TimeSpan.FromHours(1));
+    
+    Console.WriteLine($"計算結果: {expensiveCalculation:F4}");
+}
+
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public decimal Price { get; set; }
+}
+```
+
+**短期快取範例：**
+```csharp
+void Main()
+{
+    Console.WriteLine("測試短期快取過期機制：");
+    
+    // 設定 3 秒過期的快取
+    var shortCache = "short_term_data".GetOrSetCache(() =>
+    {
+        return $"建立時間: {DateTime.Now:HH:mm:ss}";
+    }, TimeSpan.FromSeconds(3));
+    
+    Console.WriteLine($"第一次取得: {shortCache}");
+    
+    // 立即再次取得（應該使用快取）
+    var cachedData = "short_term_data".GetOrSetCache(() =>
+    {
+        return $"新建立時間: {DateTime.Now:HH:mm:ss}";
+    }, TimeSpan.FromSeconds(3));
+    
+    Console.WriteLine($"快取取得: {cachedData}");
+    
+    // 等待 4 秒後再次取得（快取應該已過期）
+    Thread.Sleep(4000);
+    var expiredData = "short_term_data".GetOrSetCache(() =>
+    {
+        return $"過期後建立: {DateTime.Now:HH:mm:ss}";
+    }, TimeSpan.FromSeconds(3));
+    
+    Console.WriteLine($"過期後取得: {expiredData}");
+}
+```
+
+##### 🎯 **進階功能特性**
+
+**執行緒安全性：**
+- ✅ **ConcurrentDictionary**：提供執行緒安全的字典操作
+- ✅ **原子性操作**：`TryGetValue` 和 `TryRemove` 都是原子性的
+- ✅ **無鎖設計**：避免鎖定造成的效能瓶頸
+
+**過期機制：**
+- ⏰ **自動過期檢查**：每次存取時都會檢查是否過期
+- 🗑️ **自動清理**：過期的項目會自動從快取中移除
+- 🔄 **智慧更新**：過期後會自動執行 getData 函式取得新資料
+
+**型別安全：**
+- 🔒 **強型別檢查**：確保快取和取出的資料型別一致
+- 🛡️ **型別轉換安全**：使用 `is` 模式匹配避免轉型錯誤
+- ✨ **泛型支援**：支援任何型別的資料快取
+
+##### 🚀 **效能最佳化建議**
+
+**快取索引鍵設計：**
+```csharp
+// ✅ 良好的索引鍵命名
+"user_profile_123"
+"product_list_category_electronics"
+"weather_data_taipei_2024-08-13"
+
+// ❌ 避免的索引鍵設計
+"data"
+"temp"
+"cache1"
+```
+
+**適當的過期時間：**
+```csharp
+// 根據資料特性設定合適的過期時間
+TimeSpan.FromMinutes(5)    // 使用者會話資料
+TimeSpan.FromHours(1)      // 產品資訊
+TimeSpan.FromDays(1)       // 靜態配置資料
+TimeSpan.FromSeconds(30)   // 即時資料
+```
+
+**記憶體管理：**
+```csharp
+// 定期清理過期項目（可選的背景任務）
+public static void CleanupExpiredItems()
+{
+    var keysToRemove = new List<string>();
+    
+    foreach (var kvp in MemoryHelper.dict)
+    {
+        if (kvp.Value is CacheItem<object> item && DateTime.Now >= item.Expiration)
+        {
+            keysToRemove.Add(kvp.Key);
+        }
+    }
+    
+    foreach (var key in keysToRemove)
+    {
+        MemoryHelper.dict.TryRemove(key, out _);
+    }
+    
+    Console.WriteLine($"清理了 {keysToRemove.Count} 個過期快取項目");
+}
+```
+
+##### ⚠️ **使用注意事項**
+
+**記憶體考量：**
+- 📊 監控快取大小，避免記憶體使用過多
+- 🔄 考慮實作 LRU（最近最少使用）清理策略
+- 🗑️ 定期清理過期項目，釋放記憶體
+
+**併發考量：**
+- 🔒 雖然 `ConcurrentDictionary` 是執行緒安全的，但 `getData()` 函式可能不是
+- ⚡ 避免在 `getData()` 中執行長時間的操作
+- 🎯 考慮使用 `SemaphoreSlim` 來控制併發的 `getData()` 呼叫
+
+**快取策略：**
+```csharp
+// 考慮根據不同場景使用不同的快取策略
+public enum CacheStrategy
+{
+    WriteThrough,    // 寫穿透
+    WriteBack,       // 寫回
+    WriteAround      // 寫繞過
+}
+```
+
+> **🌟 重點提醒**
+> 
+> 1. **執行緒安全**：`ConcurrentDictionary` 提供基本的執行緒安全，但要注意 `getData()` 函式的執行緒安全性
+> 2. **記憶體管理**：定期監控和清理快取，避免記憶體洩漏
+> 3. **過期策略**：根據資料特性設定合適的過期時間，平衡效能和資料新鮮度
+> 4. **錯誤處理**：在 `getData()` 函式中加入適當的錯誤處理機制
 
 ---
 
