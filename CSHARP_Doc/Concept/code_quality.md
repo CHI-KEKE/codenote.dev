@@ -13,6 +13,7 @@
     - [1.5.2 Wrapper](#152-wrapper)
     - [1.5.3 泛型與快取](#153-泛型與快取)
     - [1.5.4 泛型快取 - 進階版](#154-泛型快取-進階版)
+    - [1.5.5 快取反序列化泛型](#155-快取反序列化泛型)
   - [1.6 實體與介面](#16-實體與介面)
     - [1.6.1 介面變數與實體物件](#161-介面變數與實體物件)
     - [1.6.2 GetType() 與型別判斷](#162-gettype-與型別判斷)
@@ -837,6 +838,121 @@ public enum CacheStrategy
 > 3. **過期策略**：根據資料特性設定合適的過期時間，平衡效能和資料新鮮度
 > 4. **錯誤處理**：在 `getData()` 函式中加入適當的錯誤處理機制
 
+#### 1.5.5 快取反序列化泛型
+
+在前面的快取範例基礎上，我們經常需要處理物件的序列化和反序列化。建立一個專門處理 Redis 快取並支援泛型反序列化的服務，可以讓快取操作更加簡潔和型別安全。
+
+##### 🎯 **ICacheService 介面設計**
+
+```csharp
+public interface ICacheService
+{
+    T Get<T>(string cacheKey);
+    bool Set<T>(string cacheKey, T value, DateTimeOffset expirationTime);
+    object Remove(string cacheKey);
+}
+```
+
+##### 🔧 **RedisCacheService 實作**
+
+以下實作展示了一個完整的 Redis 快取服務，具備泛型支援和自動序列化功能：
+
+```csharp
+public class RedisCacheService : ICacheService
+{
+    private readonly IDatabase _database;
+
+    public RedisCacheService()
+    {
+        var redis = ConnectionMultiplexer.Connect("localhost:6379");
+        this._database = redis.GetDatabase();
+    }
+
+    public T Get<T>(string cacheKey)
+    {
+        var value = this._database.StringGet(cacheKey);
+        if (string.IsNullOrEmpty(value) == false)
+        {
+            return JsonSerializer.Deserialize<T>(value);
+        }
+
+        return default;
+    }
+
+    public object Remove(string cacheKey)
+    {
+        var exists = this._database.KeyExists(cacheKey);
+        if (exists)
+            return this._database.KeyDelete(cacheKey);
+
+        return false;
+    }
+
+    public bool Set<T>(string cacheKey, T value, DateTimeOffset expirationTime)
+    {
+        var expirtyTime = expirationTime.DateTime.Subtract(DateTime.Now);
+        return this._database.StringSet(cacheKey, JsonSerializer.Serialize(value), expirtyTime);
+    }
+}
+```
+
+##### 📝 **使用範例**
+
+**基本物件快取：**
+```csharp
+[HttpGet("drivers")]
+public async Task<IActionResult> Get()
+{
+		var cacheData = _cacheService.GetData<IEnumerable<Driver>>("drivers");
+
+		if(cacheData != null && cacheData.Count() > 0)  // prevent undefined and null may be deem as an object that > 0
+				return Ok(cacheData);
+
+		cacheData =  await _DbContext.Drivers.ToListAsync();
+
+		var expiryDate = DataTimeOffset.DataTime.AddSeconds(30)
+
+		_cacheService.SetData<IEnumarable<Driver>>("drivers",cacheData,expiryDate);
+
+		return Ok(cacheData)
+		
+}
+
+
+[HttpPost("AddDriver")]
+
+public async Task<IActionResult> Post(Driver driver)
+{
+		var AddedObj = _DbContext.Drivers.AddASync(driver);
+		
+		var expiryTime = DataTimeOffset.DateTime.AddSeconds(30);
+
+		_cacheService.SetData<Driver>($"driver{driver.Id}",AddObj.Entity,expiryTime)
+
+		await _context.SaveChangesAsync();
+
+		return Ok(Addobj.Entity);
+}
+
+
+[HttpDelete("DeleteDriver")]
+
+public async Task<IActionResult> Delete(int id)
+{
+		var existEntity = _DbContext.Drivers.FirstOrDefault(x => x.id == id)
+
+		if(existEntity != null)
+		{
+				_context.Driver.Remove(existEntity);
+				_cacheService.RemoveData($"driver{id}");
+
+				_context.SaveChanges()
+
+				return NoContent();
+		}
+
+		return NotFound();
+}
 ---
 
 ### 1.6 實體與介面
