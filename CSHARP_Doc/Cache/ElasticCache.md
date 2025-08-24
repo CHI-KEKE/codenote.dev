@@ -15,6 +15,13 @@
   - [6.3 TLS 安全連線說明](#63-tls-安全連線說明)
   - [6.4 Redis 基本操作](#64-redis-基本操作)
   - [6.5 連線診斷與監控](#65-連線診斷與監控)
+- [7. 程式碼連接](#7-程式碼連接)
+  - [7.1 ASP.NET Core 連線設定](#71-aspnet-core-連線設定)
+  - [7.2 連線參數配置](#72-連線參數配置)
+  - [7.3 連線狀態檢查](#73-連線狀態檢查)
+- [8. IAM 權限管理](#8-iam-權限管理)
+  - [8.1 ElastiCache 存取權限](#81-elasticache-存取權限)
+  - [8.2 Policy 設定](#82-policy-設定)
 
 ---
 
@@ -359,3 +366,388 @@ sudo ufw status
 > 3. **監控機制**：定期檢查連線狀態和效能指標
 > 4. **備份策略**：設定自動備份和災難復原計畫
 > 5. **成本最佳化**：選擇適合的執行個體類型和容量規劃
+
+## 7. 程式碼連接
+
+### 7.1 ASP.NET Core 連線設定
+
+#### 🔗 **StackExchange.Redis 整合**
+
+在 ASP.NET Core 應用程式中設定 ElastiCache Redis 連線的標準做法：
+
+```csharp
+builder.Services.AddSingleton<IConnectionMultiplexer>(c => {
+    var options = ConfigurationOptions.Parse("master.redis.cyg7e4.apse2.cache.amazonaws.com:6379");
+    options.Password = "";
+    options.Ssl = true;
+    options.AllowAdmin = true; // 如果需要進行管理操作，可以設置為 true
+    options.AbortOnConnectFail = false; // 如果要允許重試連接，可以設置為 false
+
+    var connection = ConnectionMultiplexer.Connect(options);
+    if (connection.IsConnected)
+    {
+        Console.WriteLine("ElasticRedis connection established.");
+    }
+    else
+    {
+        Console.WriteLine("Failed to connect to Redis.");
+    }
+
+    return connection;
+});
+```
+
+#### 📦 **必要套件安裝**
+
+```bash
+# 安裝 StackExchange.Redis 套件
+dotnet add package StackExchange.Redis
+
+# 或使用 Package Manager Console
+Install-Package StackExchange.Redis
+```
+
+### 7.2 連線參數配置
+
+#### ⚙️ **ConfigurationOptions 詳細說明**
+
+| 參數 | 說明 | 建議值 | 用途 |
+|------|------|--------|------|
+| `Parse()` | Redis 伺服器地址和 Port | `master.redis.xxx.cache.amazonaws.com:6379` | 指定連線目標 |
+| `Password` | 認證密碼 | 你的 Auth Token | 身份驗證 |
+| `Ssl` | 啟用 SSL/TLS | `true` | 加密通訊 |
+| `AllowAdmin` | 允許管理操作 | `true`/`false` | 管理權限控制 |
+| `AbortOnConnectFail` | 連線失敗時中止 | `false` | 容錯處理 |
+
+#### 🔧 **進階連線設定範例**
+
+```csharp
+builder.Services.AddSingleton<IConnectionMultiplexer>(serviceProvider =>
+{
+    var configuration = serviceProvider.GetService<IConfiguration>();
+    
+    var options = new ConfigurationOptions
+    {
+        EndPoints = { "master.redis.cyg7e4.apse2.cache.amazonaws.com:6379" },
+        Password = configuration.GetConnectionString("ElastiCachePassword"),
+        Ssl = true,
+        AllowAdmin = true,
+        AbortOnConnectFail = false,
+        ConnectRetry = 3,              // 重試次數
+        ConnectTimeout = 5000,         // 連線逾時（毫秒）
+        SyncTimeout = 5000,            // 同步操作逾時
+        AsyncTimeout = 5000,           // 非同步操作逾時
+        KeepAlive = 60,               // 保持連線時間
+        DefaultDatabase = 0            // 預設資料庫
+    };
+
+    var connection = ConnectionMultiplexer.Connect(options);
+    
+    // 連線事件處理
+    connection.ConnectionFailed += (sender, e) =>
+    {
+        Console.WriteLine($"❌ ElastiCache 連線失敗: {e.Exception?.Message}");
+    };
+    
+    connection.ConnectionRestored += (sender, e) =>
+    {
+        Console.WriteLine($"✅ ElastiCache 連線已恢復: {e.EndPoint}");
+    };
+    
+    return connection;
+});
+```
+
+#### 📋 **設定檔配置（appsettings.json）**
+
+```json
+{
+  "ConnectionStrings": {
+    "ElastiCache": "master.redis.cyg7e4.apse2.cache.amazonaws.com:6379",
+    "ElastiCachePassword": "your-auth-token-here"
+  },
+  "ElastiCache": {
+    "EnableSsl": true,
+    "AllowAdmin": false,
+    "ConnectTimeout": 5000,
+    "Database": 0,
+    "ConnectRetry": 3
+  }
+}
+```
+
+### 7.3 連線狀態檢查
+
+#### 🏥 **健康檢查實作**
+
+```csharp
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+
+// 註冊健康檢查
+builder.Services.AddHealthChecks()
+    .AddCheck<ElastiCacheHealthCheck>("elasticache");
+
+public class ElastiCacheHealthCheck : IHealthCheck
+{
+    private readonly IConnectionMultiplexer _connectionMultiplexer;
+
+    public ElastiCacheHealthCheck(IConnectionMultiplexer connectionMultiplexer)
+    {
+        _connectionMultiplexer = connectionMultiplexer;
+    }
+
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context, 
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (!_connectionMultiplexer.IsConnected)
+            {
+                return HealthCheckResult.Unhealthy("ElastiCache 連線未建立");
+            }
+
+            var database = _connectionMultiplexer.GetDatabase();
+            var pingResult = await database.PingAsync();
+            
+            var data = new Dictionary<string, object>
+            {
+                ["ping_time_ms"] = pingResult.TotalMilliseconds,
+                ["endpoints"] = string.Join(", ", _connectionMultiplexer.GetEndPoints()),
+                ["is_connected"] = _connectionMultiplexer.IsConnected,
+                ["database_count"] = _connectionMultiplexer.GetDatabase().Multiplexer.GetEndPoints().Length
+            };
+
+            return HealthCheckResult.Healthy("ElastiCache 連線正常", data);
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy("ElastiCache 健康檢查失敗", ex);
+        }
+    }
+}
+
+// 在 Program.cs 中設定健康檢查端點
+app.MapHealthChecks("/health/elasticache");
+```
+
+#### 💻 **使用範例 Service**
+
+```csharp
+public interface IElastiCacheService
+{
+    Task<T> GetAsync<T>(string key);
+    Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null);
+    Task<bool> DeleteAsync(string key);
+}
+
+public class ElastiCacheService : IElastiCacheService
+{
+    private readonly IDatabase _database;
+    private readonly ILogger<ElastiCacheService> _logger;
+
+    public ElastiCacheService(IConnectionMultiplexer redis, ILogger<ElastiCacheService> logger)
+    {
+        _database = redis.GetDatabase();
+        _logger = logger;
+    }
+
+    public async Task<T> GetAsync<T>(string key)
+    {
+        try
+        {
+            var value = await _database.StringGetAsync(key);
+            if (!value.IsNullOrEmpty)
+            {
+                return JsonSerializer.Deserialize<T>(value);
+            }
+            return default(T);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "從 ElastiCache 取得資料失敗，Key: {Key}", key);
+            return default(T);
+        }
+    }
+
+    public async Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null)
+    {
+        try
+        {
+            var serializedValue = JsonSerializer.Serialize(value);
+            return await _database.StringSetAsync(key, serializedValue, expiry);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "設定 ElastiCache 資料失敗，Key: {Key}", key);
+            return false;
+        }
+    }
+
+    public async Task<bool> DeleteAsync(string key)
+    {
+        try
+        {
+            return await _database.KeyDeleteAsync(key);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "刪除 ElastiCache 資料失敗，Key: {Key}", key);
+            return false;
+        }
+    }
+}
+
+// 註冊服務
+builder.Services.AddScoped<IElastiCacheService, ElastiCacheService>();
+```
+
+## 8. IAM 權限管理
+
+### 8.1 ElastiCache 存取權限
+
+#### 🔐 **IAM 權限需求**
+
+要讓你的 EC2 執行個體或應用程式能夠存取 ElastiCache，需要適當的 IAM 權限設定。
+
+#### 👤 **權限設定流程**
+
+1. **建立或選擇 IAM 角色/使用者**
+2. **附加 ElastiCache 相關政策**
+3. **確認權限範圍和限制**
+
+### 8.2 Policy 設定
+
+#### 📜 **ElastiCache Full Access Policy**
+
+最簡單的方式是附加 AWS 管理的政策：
+
+```bash
+Policy Name: ElastiCacheFullAccess
+Action: Attach to Role/User
+```
+
+#### 🎯 **詳細設定步驟**
+
+**步驟 1：進入 IAM 主控台**
+```
+AWS Console → IAM → Roles (或 Users)
+```
+
+**步驟 2：選擇目標角色**
+```
+選擇你的 EC2 角色或應用程式使用的 IAM 角色
+```
+
+**步驟 3：附加政策**
+```
+Permissions → Add permissions → Attach policies directly
+搜尋: ElastiCacheFullAccess
+選擇並附加
+```
+
+#### 🔒 **最小權限原則 Policy 範例**
+
+如果你想要更精確的權限控制，可以建立自訂政策：
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ElastiCacheAccess",
+            "Effect": "Allow",
+            "Action": [
+                "elasticache:Describe*",
+                "elasticache:List*",
+                "elasticache:Connect"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "ElastiCacheSpecificCluster",
+            "Effect": "Allow",
+            "Action": [
+                "elasticache:*"
+            ],
+            "Resource": [
+                "arn:aws:elasticache:ap-southeast-2:123456789012:cluster/my-redis-cluster",
+                "arn:aws:elasticache:ap-southeast-2:123456789012:replicationgroup/my-redis-group"
+            ]
+        }
+    ]
+}
+```
+
+#### 📊 **權限等級比較**
+
+| 權限等級 | Policy 名稱 | 適用場景 | 權限範圍 |
+|----------|-------------|----------|----------|
+| **完整權限** | `ElastiCacheFullAccess` | 開發/測試環境 | 所有 ElastiCache 操作 |
+| **唯讀權限** | `ElastiCacheReadOnlyAccess` | 監控/報告 | 僅檢視和列出資源 |
+| **自訂權限** | 自建 Policy | 正式環境 | 特定叢集的特定操作 |
+
+#### ⚙️ **EC2 角色設定範例**
+
+```bash
+# 為 EC2 建立角色
+aws iam create-role --role-name ElastiCacheAccessRole --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "ec2.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+        }
+    ]
+}'
+
+# 附加政策到角色
+aws iam attach-role-policy \
+    --role-name ElastiCacheAccessRole \
+    --policy-arn arn:aws:iam::aws:policy/ElastiCacheFullAccess
+
+# 建立 Instance Profile
+aws iam create-instance-profile --instance-profile-name ElastiCacheAccessProfile
+
+# 將角色加入 Instance Profile
+aws iam add-role-to-instance-profile \
+    --instance-profile-name ElastiCacheAccessProfile \
+    --role-name ElastiCacheAccessRole
+```
+
+#### 🔍 **權限驗證**
+
+```csharp
+// 在應用程式中驗證權限
+public async Task<bool> ValidateElastiCacheAccess()
+{
+    try
+    {
+        var database = _connectionMultiplexer.GetDatabase();
+        await database.PingAsync();
+        return true;
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "ElastiCache 存取權限驗證失敗");
+        return false;
+    }
+}
+```
+
+#### ⚠️ **安全注意事項**
+
+1. **最小權限原則**：只授予應用程式需要的最小權限
+2. **角色輪換**：定期檢查和更新 IAM 角色
+3. **審計日誌**：啟用 CloudTrail 記錄 API 呼叫
+4. **網路隔離**：搭配 VPC 和 Security Group 限制存取
+
+> **🔐 IAM 重點提醒**
+> 
+> 1. **權限分離**：開發、測試、正式環境使用不同的權限等級
+> 2. **定期審查**：定期檢查不需要的權限並移除
+> 3. **監控存取**：使用 CloudWatch 監控異常的存取模式
+> 4. **緊急處理**：準備緊急撤銷權限的程序
