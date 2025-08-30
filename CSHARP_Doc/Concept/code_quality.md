@@ -14,6 +14,7 @@
     - [1.5.3 泛型與快取](#153-泛型與快取)
     - [1.5.4 泛型快取 - 進階版](#154-泛型快取-進階版)
     - [1.5.5 快取反序列化泛型](#155-快取反序列化泛型)
+    - [1.5.6 Response Entity 泛型應用](#156-response-entity-泛型應用)
   - [1.6 實體與介面](#16-實體與介面)
     - [1.6.1 介面變數與實體物件](#161-介面變數與實體物件)
     - [1.6.2 GetType() 與型別判斷](#162-gettype-與型別判斷)
@@ -27,7 +28,7 @@
     - [1.8.3 複合條件控制](#183-複合條件控制)
 ---
 
-### 1.1 抽取共用驗證邏輯9
+### 1.1 抽取共用驗證邏輯
 
 在促銷引擎的開發中，常常需要對「指定商品類型」和「排除商品類型」進行相同的驗證邏輯。如果每次都重複寫相同的驗證程式碼，會造成：
 
@@ -953,6 +954,243 @@ public async Task<IActionResult> Delete(int id)
 
 		return NotFound();
 }
+```
+
+#### 1.5.6 Response Entity 泛型應用
+
+##### 🔧 **HttpClientService 實作**
+
+```csharp
+public class HttpClientService
+{
+    private readonly HttpClient _httpClient;
+
+    public HttpClientService(HttpClient httpClient)
+    {
+        _httpClient = httpClient;
+    }
+
+    public async Task<T> GetFromJsonAsync<T>(string url, IDictionary<string, string>? headers = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        if (headers != null)
+        {
+            foreach (var header in headers)
+            {
+                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+        }
+
+        try
+        {
+            var response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(json)!;
+        }
+        catch (HttpRequestException ex)
+        {
+            // 這裡可加上 Log 紀錄
+            throw new Exception($"GET 請求失敗：{ex.Message}", ex);
+        }
+    }
+
+    public async Task<T> PostFormAsync<T>(string url,
+        IDictionary<string, string>? headers = null,
+        IDictionary<string, string>? formData = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new FormUrlEncodedContent(formData ?? new Dictionary<string, string>())
+        };
+
+        if (headers != null)
+        {
+            foreach (var header in headers)
+            {
+                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+        }
+
+        try
+        {
+            var response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(json)!;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"POST 請求失敗：{ex.Message}", ex);
+        }
+    }
+}
+```
+
+##### 📝 **使用範例**
+
+**API 回應型別定義：**
+```csharp
+// 使用者資訊回應
+public class UserResponse
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string Email { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+// 產品清單回應
+public class ProductListResponse
+{
+    public List<Product> Products { get; set; }
+    public int TotalCount { get; set; }
+    public int Page { get; set; }
+}
+
+// 通用 API 回應包裝
+public class ApiResponse<T>
+{
+    public bool Success { get; set; }
+    public string Message { get; set; }
+    public T Data { get; set; }
+    public int StatusCode { get; set; }
+}
+```
+
+**實際使用方式：**
+```csharp
+public class UserService
+{
+    private readonly HttpClientService _httpClientService;
+
+    public UserService(HttpClientService httpClientService)
+    {
+        _httpClientService = httpClientService;
+    }
+
+    // 取得使用者資訊
+    public async Task<UserResponse> GetUserAsync(int userId)
+    {
+        var headers = new Dictionary<string, string>
+        {
+            ["Authorization"] = "Bearer your_token_here",
+            ["Accept"] = "application/json"
+        };
+
+        var url = $"https://api.example.com/users/{userId}";
+        return await _httpClientService.GetFromJsonAsync<UserResponse>(url, headers);
+    }
+
+    // 取得包裝的 API 回應
+    public async Task<ApiResponse<UserResponse>> GetUserWithApiWrapperAsync(int userId)
+    {
+        var url = $"https://api.example.com/v2/users/{userId}";
+        return await _httpClientService.GetFromJsonAsync<ApiResponse<UserResponse>>(url);
+    }
+
+    // 使用者登入（POST 表單）
+    public async Task<ApiResponse<string>> LoginAsync(string username, string password)
+    {
+        var formData = new Dictionary<string, string>
+        {
+            ["username"] = username,
+            ["password"] = password
+        };
+
+        var headers = new Dictionary<string, string>
+        {
+            ["Content-Type"] = "application/x-www-form-urlencoded"
+        };
+
+        var url = "https://api.example.com/auth/login";
+        return await _httpClientService.PostFormAsync<ApiResponse<string>>(url, headers, formData);
+    }
+}
+```
+
+**在 Controller 中的使用：**
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    private readonly UserService _userService;
+
+    public UsersController(UserService userService)
+    {
+        _userService = userService;
+    }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetUser(int id)
+    {
+        try
+        {
+            var user = await _userService.GetUserAsync(id);
+            return Ok(user);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id}/detailed")]
+    public async Task<IActionResult> GetUserDetailed(int id)
+    {
+        try
+        {
+            var response = await _userService.GetUserWithApiWrapperAsync(id);
+            
+            if (response.Success)
+            {
+                return Ok(response.Data);
+            }
+            else
+            {
+                return BadRequest(new { message = response.Message });
+            }
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("login")]
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    {
+        try
+        {
+            var result = await _userService.LoginAsync(request.Username, request.Password);
+            
+            if (result.Success)
+            {
+                return Ok(new { token = result.Data });
+            }
+            else
+            {
+                return Unauthorized(new { message = result.Message });
+            }
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = ex.Message });
+        }
+    }
+}
+
+public class LoginRequest
+{
+    public string Username { get; set; }
+    public string Password { get; set; }
+}
+```
+
 ---
 
 ### 1.6 實體與介面

@@ -7,6 +7,7 @@
 - [3. Get-loop](#3-get-loop)
 - [4. 組織 QueryString](#4-組織-querystring)
 - [5. 設定 Timeout](#5-設定-timeout)
+- [6. 使用 HttpRequestMessage 組 Request](#6-使用-httprequestmessage-組-request)
 ---
 
 ## 1. Post-loop
@@ -201,3 +202,117 @@ builder.Services.AddHttpClient("FastApi", client =>
 | `new HttpClient()`   | `client.Timeout = TimeSpan.FromSeconds(5);`             |
 | `IHttpClientFactory` | `AddHttpClient("name", client => client.Timeout = ...)` |
 | 每次建立動態設定             | `factory.CreateClient().Timeout = ...`（較不推薦）            |
+
+## 6. 使用 HttpRequestMessage 組 Request
+
+### 🏗️ 介面定義
+
+```csharp
+public interface IStripeHttpClient
+{
+    Task<T> GetAsync<T>(string url, IDictionary<string, string>? headers = null);
+    Task<T> PostFormAsync<T>(string url, IDictionary<string, string>? headers = null, IDictionary<string, string>? formData = null);
+}
+```
+
+### 🔧 StripeHttpClient 實作
+
+```csharp
+public class StripeHttpClient : IStripeHttpClient
+{
+    private readonly HttpClient _httpClient;
+
+    public StripeHttpClient(HttpClient httpClient)
+    {
+        _httpClient = httpClient;
+    }
+
+    public async Task<T> GetAsync<T>(string url, IDictionary<string, string>? headers = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        if (headers != null)
+        {
+            foreach (var header in headers)
+                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        try
+        {
+            var response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(json)!;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Stripe GET 請求錯誤：{ex.Message}", ex);
+        }
+    }
+
+    public async Task<T> PostFormAsync<T>(string url, IDictionary<string, string>? headers = null, IDictionary<string, string>? formData = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new FormUrlEncodedContent(formData ?? new Dictionary<string, string>())
+        };
+
+        if (headers != null)
+        {
+            foreach (var header in headers)
+                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        try
+        {
+            var response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(json)!;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Stripe POST 請求錯誤：{ex.Message}", ex);
+        }
+    }
+}
+```
+
+### 📦 Autofac 依賴注入設定
+
+```csharp
+builder.Register(c =>
+{
+    var client = new HttpClient
+    {
+        BaseAddress = new Uri("https://api.stripe.com")
+    };
+    return new StripeHttpClient(client);
+})
+.As<IStripeHttpClient>()
+.SingleInstance(); // 或 InstancePerLifetimeScope()
+```
+
+### 💻 使用範例
+
+**GET 請求範例：**
+```csharp
+var headers = new Dictionary<string, string>
+{
+    { "Authorization", "Bearer YOUR_SECRET_KEY" }
+};
+
+var response = await _stripeHttpClient.GetAsync<StripeCustomerDto>(
+    "/v1/customers/cus_ABC123", headers);
+```
+
+**POST 表單請求範例：**
+```csharp
+var formData = new Dictionary<string, string>
+{
+    { "email", "test@example.com" }
+};
+
+var customer = await _stripeHttpClient.PostFormAsync<StripeCustomerDto>(
+    "/v1/customers", headers, formData);
+```
