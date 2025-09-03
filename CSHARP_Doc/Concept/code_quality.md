@@ -31,6 +31,8 @@
 - [3. abstract class](#3-abstract-class)
 - [4. try catch](#4-try-catch)
 - [5. 方法直接寫在 建立的 entity裡面](#5-方法直接寫在-建立的-entity裡面)
+- [6. 關於建構子](#6-關於建構子)
+  - [6.1 string 不要放在建構子注入的位置](#61-string-不要放在建構子注入的位置)
 ---
 
 ### 1.1 抽取共用驗證邏輯
@@ -3715,3 +3717,39 @@ public void ProcessLargeDataSet(IEnumerable<string> data)
 ```
 
 ## 5. 方法直接寫在 建立的 entity 裡面
+
+## 6. 關於建構子
+
+
+### 6.1 string 不要放在建構子注入的位置
+
+#### 🚫 **錯誤做法**
+
+**問題範例：**
+```csharp
+// ❌ 錯誤：直接注入 string 參數
+public class EmailService : IEmailService
+{
+    private readonly IEmailSender _emailSender;
+    private readonly string _smtpServer;
+    private readonly string _fromAddress;
+    private readonly string _apiKey;
+    
+    public EmailService(
+        IEmailSender emailSender,
+        string smtpServer,        // 問題：string 參數難以區分
+        string fromAddress,       // 問題：注入時容易搞混
+        string apiKey)           // 問題：缺乏型別安全性
+    {
+        _emailSender = emailSender;
+        _smtpServer = smtpServer;
+        _fromAddress = fromAddress;
+        _apiKey = apiKey;
+    }
+    
+    public async Task SendEmailAsync(string to, string subject, string body)
+    {
+        // 使用配置傳送郵件
+        await _emailSender.SendAsync(_smtpServer, _fromAddress, to, subject, body, _apiKey);
+    }
+}
